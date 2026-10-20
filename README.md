@@ -604,3 +604,6 @@ For security vulnerabilities, follow the process in [SECURITY.md](./SECURITY.md)
 
 <!-- handsoff-issue-1524 -->
 - #1524: CT-05: Multisig payload should bind the action and network, not just `(contract, order_id)`
+
+<!-- handsoff-issue-1540 -->
+- #1540: CT-21: Evidence submission — validate party, window and storage layout
