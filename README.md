@@ -601,3 +601,6 @@ For security vulnerabilities, follow the process in [SECURITY.md](./SECURITY.md)
 
 <!-- handsoff-issue-1382 -->
 - #1382: Align `api/client.js` with real backend routes: about a dozen methods call endpoints that don't exist
+
+<!-- handsoff-issue-1524 -->
+- #1524: CT-05: Multisig payload should bind the action and network, not just `(contract, order_id)`
