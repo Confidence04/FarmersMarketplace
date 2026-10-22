@@ -7,6 +7,7 @@
  */
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import DisputeDetail from '../disputes/DisputeDetail';
 
 const STATUS_COLOR = {
   pending: '#e67e22',
@@ -71,6 +72,7 @@ export default function OrderManagementPanel({
 }) {
   const { t } = useTranslation();
   const [returnActions, setReturnActions] = useState(new Set());
+  const [disputeOrderId, setDisputeOrderId] = useState(null);
 
   function handleReturnAction(action, orderId) {
     if (returnActions.has(orderId)) return;
@@ -261,6 +263,15 @@ export default function OrderManagementPanel({
                   >
                     {STATUS_ICON[o.status]} {o.status}
                   </span>
+                  {o.dispute_id && (
+                    <button
+                      type="button"
+                      onClick={() => setDisputeOrderId(o.id)}
+                      style={{ fontSize: 12, padding: '5px 12px', borderRadius: 8, border: '1px solid #a04000', background: '#fff', color: '#a04000', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      ⚖️ View dispute
+                    </button>
+                  )}
                   {['paid', 'processing', 'shipped'].includes(o.status) && (
                     <select
                       style={{
@@ -291,6 +302,9 @@ export default function OrderManagementPanel({
             </div>
           );
         })
+      )}
+      {disputeOrderId && (
+        <DisputeDetail orderId={disputeOrderId} onClose={() => setDisputeOrderId(null)} />
       )}
     </div>
   );

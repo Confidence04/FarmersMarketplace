@@ -26,6 +26,10 @@ export function setAccessToken(token) {
   sessionExpired = false;
 }
 
+export function getAccessToken() {
+  return accessToken;
+}
+
 export function clearAccessToken() {
   accessToken = null;
 }
@@ -246,6 +250,16 @@ function requireIdempotencyKey(idempotencyKey) {
   return newIdempotencyKey();
 }
 
+// Payments, wallet sends and order placement must never be attempted offline (FE-24).
+export const OFFLINE_BLOCKED = 'You are offline. Payments, wallet sends and orders are disabled until you reconnect.';
+function requireOnline() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    const err = new Error(OFFLINE_BLOCKED);
+    err.code = 'offline';
+    throw err;
+  }
+}
+
 function toQs(params = {}) {
   const entries = Object.entries(params).filter(([, v]) => v !== '' && v != null);
   return entries.length ? `?${new URLSearchParams(entries).toString()}` : '';
@@ -257,14 +271,14 @@ export const api = {
   login: (body) => request('/auth/login', { method: 'POST', body }),
   logout: () => request('/auth/logout', { method: 'POST' }),
   refresh: () => refreshAccessToken(),
-  getCurrentUser: () => request('/auth/me'),
+  getCurrentUser: (options) => request('/auth/me', options),
   forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: { email } }),
   resetPassword: (token, password) => request('/auth/reset-password', { method: 'POST', body: { token, password } }),
   verifyEmail: (token) => request(`/auth/verify-email?token=${encodeURIComponent(token)}`),
   resendVerification: (email) => request('/auth/resend-verification', { method: 'POST', body: { email } }),
 
   getProducts: (filters = {}) => request(`/products${toQs(filters)}`),
-  getCategories: () => request('/products/categories'),
+  getCategories: (options) => request('/products/categories', options),
   getCategoryList: () => request('/categories'),
   getProduct: (id, options) => request(`/products/${id}`, options),
   createProduct: (body) => request('/products', { method: 'POST', body }),
@@ -280,7 +294,7 @@ export const api = {
   getBundles: () => request('/bundles'),
   createBundle: (body) => request('/bundles', { method: 'POST', body }),
   deleteBundle: (id) => request(`/bundles/${id}`, { method: 'DELETE' }),
-  purchaseBundle: (bundle_id) => request('/bundles/purchase', { method: 'POST', body: { bundle_id } }),
+  purchaseBundle: (bundle_id) => (requireOnline(), request('/bundles/purchase', { method: 'POST', body: { bundle_id } })),
   getBundleOrders: () => request('/bundles/orders'),
 
   // Price tiers
@@ -321,17 +335,16 @@ export const api = {
     return request('/products/bulk', { method: 'POST', body: form });
   },
 
-  placeOrder: (body, idempotencyKey) =>
-    request('/orders', {
+  placeOrder: (body, idempotencyKey) => (requireOnline(), request('/orders', {
       method: 'POST',
       body,
       headers: { 'X-Idempotency-Key': requireIdempotencyKey(idempotencyKey) },
-    }),
+    })),
   getOrders: (params = {}) => request(`/orders${toQs(params)}`),
   getSales: (params = {}) => request(`/orders/sales${toQs(params)}`),
   updateOrderStatus: (id, status) => request(`/orders/${id}/status`, { method: 'PATCH', body: { status } }),
 
-  fundEscrow: (orderId) => request(`/orders/${orderId}/escrow`, { method: 'POST' }),
+  fundEscrow: (orderId) => (requireOnline(), request(`/orders/${orderId}/escrow`, { method: 'POST' })),
   claimEscrow: (orderId) => request(`/orders/${orderId}/claim`, { method: 'POST' }),
   claimPreorder: (orderId) => request(`/orders/${orderId}/claim-preorder`, { method: 'POST' }),
   fileReturn: (orderId, reason) => request(`/orders/${orderId}/return`, { method: 'POST', body: { reason } }),
@@ -366,10 +379,10 @@ export const api = {
 
   submitReview: (body) => request("/reviews", { method: "POST", body }),
 
-  getWallet: () => request('/wallet'),
-  getTransactions: () => request('/wallet/transactions'),
+  getWallet: (options) => request('/wallet', options),
+  getTransactions: (params = {}, options) => request(`/wallet/transactions${toQs(params)}`, options),
   fundWallet: () => request('/wallet/fund', { method: 'POST' }),
-  sendXLM: (body) => request('/wallet/send', { method: 'POST', body }),
+  sendXLM: (body) => (requireOnline(), request('/wallet/send', { method: 'POST', body })),
   addTrustline: (body) => request('/wallet/trustline', { method: 'POST', body }),
   removeTrustline: (body) => request('/wallet/trustline', { method: 'DELETE', body }),
   getWalletAssets: () => request('/wallet/assets'),
@@ -394,6 +407,17 @@ export const api = {
   },
   getStockStreamUrl: (productId) => `${BASE}/products/${encodeURIComponent(productId)}/stock-stream`,
   getUnreadMessageCount: () => request('/messages/unread-count'),
+  getConversations: (params) => request(`/messages${toQs(params)}`),
+  getThread: (userId, params) => request(`/messages/${encodeURIComponent(userId)}${toQs(params)}`),
+  sendMessage: (body) => request('/messages', { method: 'POST', body }),
+  markConversationRead: (userId) => request(`/messages/${encodeURIComponent(userId)}/read`, { method: 'POST' }),
+
+  // Notification center (cursor-paginated, BE-24)
+  getNotifications: (params) => request(`/notifications${toQs(params)}`),
+  getUnreadNotificationCount: () => request('/notifications/unread-count'),
+  markNotificationRead: (id) => request(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+  markAllNotificationsRead: () => request('/notifications/read-all', { method: 'POST' }),
+  getUnreadMessageCount: (options) => request('/messages/unread-count', options),
 
   getFarmer: (id) => request(`/farmers/${id}`),
   updateFarmerProfile: (body) => request("/farmers/me", { method: "PATCH", body }),
@@ -402,7 +426,7 @@ export const api = {
 
   addFavorite: (productId) => request('/favorites', { method: 'POST', body: { product_id: productId } }),
   removeFavorite: (productId) => request(`/favorites/${productId}`, { method: 'DELETE' }),
-  getFavorites: (params = {}) => request(`/favorites${toQs(params)}`),
+  getFavorites: (params = {}, options) => request(`/favorites${toQs(params)}`, options),
   checkFavorite: (productId) => request(`/favorites/check/${productId}`),
 
   setStockAlert: (productId) => request(`/products/${productId}/alert`, { method: 'POST' }),
@@ -413,12 +437,14 @@ export const api = {
   leaveWaitlist: (productId) => request(`/products/${productId}/waitlist`, { method: 'DELETE' }),
   getWaitlistStatus: (productId) => request(`/products/${productId}/waitlist/status`),
 
-  getXlmRate: () => request('/rates/xlm-usd'),
+  getXlmRate: (options) => request('/rates/xlm-usd', options),
   getMarketRate: () => request('/market/xlm-usdc'),
   bulkUpdatePrices: (updates, adjustment_percent) =>
     request('/products/bulk-price', { method: 'PATCH', body: { updates, adjustment_percent } }),
 
   getAnalytics: () => request('/analytics/farmer'),
+  getAnalyticsRange: (from, to) =>
+    request(`/analytics/farmer/range?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   getForecast: () => request('/analytics/farmer/forecast'),
   getWaitlistAnalytics: () => request('/analytics/farmer/waitlist'),
 
@@ -443,6 +469,14 @@ export const api = {
   adminGetStats: () => request('/admin/stats'),
   adminGetDisputes: () => request('/disputes'),
   adminResolveDispute: (id, body) => request(`/disputes/${id}/resolve`, { method: 'PATCH', body }),
+  openDispute: (body) => request('/disputes', { method: 'POST', body }),
+  getDispute: (id) => request(`/disputes/${id}`),
+  getDisputeByOrder: (orderId) => request(`/disputes/order/${orderId}`, { silent: true }),
+  submitDisputeEvidence: (disputeId, files) => {
+    const form = new FormData();
+    files.forEach((f) => form.append('files', f));
+    return request(`/disputes/${disputeId}/evidence`, { method: 'POST', body: form });
+  },
   adminGetContracts: (qs = '') => request(`/admin/contracts${qs}`),
   adminRegisterContract: (body) => request('/admin/contracts', { method: 'POST', body }),
   adminDeployContract: (formData) => request('/admin/contracts/deploy', { method: 'POST', body: formData }),
@@ -494,6 +528,10 @@ export const api = {
   placeOrderWithBudgetOverride: (body) => request('/orders', { method: 'POST', body: { ...body, budget_override_confirmed: true } }),
   getOrderStatus: (id) => request(`/orders/${id}/status`, { silent: true }),
   getOrderPaymentLink: (orderId) => request(`/orders/${orderId}/payment-link`),
+  prepareOrderPayment: (orderId, publicKey) =>
+    request(`/orders/${orderId}/prepare`, { method: 'POST', body: { public_key: publicKey } }),
+  submitOrderPayment: (orderId, signedXdr) =>
+    request(`/orders/${orderId}/submit`, { method: 'POST', body: { signed_xdr: signedXdr } }),
   getOrderPaymentLinkQr: (orderId) => `/api/orders/${orderId}/payment-link/qr`,
 
   getAuctions: () => request('/auctions'),
@@ -545,7 +583,8 @@ export const api = {
   getFarmerCooperatives: (farmerId) => request(`/cooperatives?farmer_id=${encodeURIComponent(farmerId)}`),
   setupMultisig: (id, body) => request(`/cooperatives/${id}/multisig-setup`, { method: 'POST', body }),
   initiateCoopTx: (id, body) => request(`/cooperatives/${id}/transactions`, { method: 'POST', body }),
-  signPendingTx: (txId) => request(`/cooperatives/transactions/${txId}/sign`, { method: 'POST' }),
+  signPendingTx: (txId, body) => request(`/cooperatives/transactions/${txId}/sign`, { method: 'POST', body }),
+  submitPendingTx: (txId) => request(`/cooperatives/transactions/${txId}/submit`, { method: 'POST' }),
   getPendingTxs: (coopId) => request(`/cooperatives/${coopId}/pending`),
   // Coupons
   getMyCoupons: () => request('/coupons'),
@@ -576,6 +615,7 @@ export const api = {
   cancelPaymentStream: (id) => request(`/streams/${id}/cancel`, { method: 'POST' }),
   decreasePaymentStreamRate: (id, rate) => request(`/streams/${id}/decrease-rate`, { method: 'PATCH', body: { rate } }),
   withdrawPaymentStream: (id) => request(`/streams/${id}/withdraw`, { method: 'POST' }),
+  topUpPaymentStream: (id, amount) => request(`/streams/${id}/top-up`, { method: 'POST', body: { amount } }),
   // Claimable balances
   getClaimableBalances: () => request('/wallet/claimable-balances'),
   claimBalance: (balance_id) => request('/wallet/claim', { method: 'POST', body: { balance_id } }),

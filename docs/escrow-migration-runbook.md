@@ -94,7 +94,7 @@ platform collected nothing. That fallback (and the argument) has been removed fr
 
 After upgrading such a deployment to this version, **every settlement path**
 (`release`, `release_to_stream`, `batch_release` items, `auto_release`,
-`multisig_release`, `resolve_dispute`) fails with `NotInitialized` (error `23`) until the
+`multisig_release`, `resolve_dispute`) fails with `NotInitialized` (error `28`) until the
 fee is stored. No funds move and no escrow changes state while it is unset. To bring a
 legacy deployment back into service:
 
@@ -127,3 +127,65 @@ Callers must also use the new signatures: `release(order_id, caller)` (no fee ar
 `release_to_stream(order_id, stream_rate_per_second, stream_end_time)` and
 `resolve_dispute(order_id, buyer_bps)`. `contracts/escrow/cli.sh`, the backend
 `invokeEscrowContract` and the testnet deploy workflow have been updated accordingly.
+
+## Persistent TTL and restore procedures (#1527)
+
+Escrow entries (`DataKey::Escrow(order_id)` and `DataKey::Token(order_id)`) are
+persistent storage. Soroban archives persistent entries once their TTL lapses;
+archived entries are not lost, but every settlement call fails until the entry is
+restored. The old fixed TTL window (`TTL_MIN = 100_000`, `TTL_MAX = 200_000`
+ledgers, roughly 5.8–11.6 days at ~5 s per ledger) was shorter than legitimate
+escrow lifetimes (pre-orders with a far-future `release_after_unix`, long
+`timeout_unix`, disputes, or a large `auto_release_days`).
+
+### Deposit-time TTL
+
+On `deposit`, the contract now extends the escrow and token entries to cover
+`max(timeout_unix, release_after_unix, auto_release_unix) - now` plus a safety
+margin, converted to ledgers and capped at the network maximum TTL. This keeps
+an escrow live through its own deadline without manual intervention.
+
+### `bump(order_id)`
+
+`bump(order_id)` is a public entry point callable by anyone. It re-extends the
+`Escrow(order_id)` and `Token(order_id)` entries to the same computed horizon and
+costs only the caller's transaction fees. Use it to keep an escrow alive when its
+configured deadlines are near or when the keeper job has not run.
+
+```bash
+stellar contract invoke \
+  --id "$ESCROW_CONTRACT_ID" \
+  --source-account "$OPERATOR_ACCOUNT" \
+  --network "$NETWORK" \
+  -- \
+  bump \
+  --order_id "$ORDER_ID"
+```
+
+### Keeper job
+
+The backend runs a keeper job that periodically lists active escrows and bumps
+any whose remaining TTL is under 3 days. Remaining TTL is read from RPC
+`getLedgerEntries` via the `liveUntilLedgerSeq` field of each entry; the keeper
+converts the current ledger sequence to a remaining-time estimate and calls
+`bump(order_id)` for entries below the threshold.
+
+### Restoring an archived escrow
+
+If an entry has already been archived (keeper outage, long inactivity), restore
+it before any settlement call:
+
+1. Identify the archived keys. The escrow key is the contract's persistent
+   `DataKey::Escrow(order_id)` ledger entry and the token key is
+   `DataKey::Token(order_id)`.
+2. Restore both entries with `stellar contract restore` (or the Soroban RPC
+   `restoreFootprint` operation) using the contract ID and the ledger keys above.
+   The restoring account pays the rent for the restored TTL.
+3. Immediately call `bump(order_id)` to extend the entries to the escrow's full
+   horizon so they do not lapse again.
+4. Verify with `get_escrow(order_id)` that the record is present and its `status`
+   is as expected before retrying settlement.
+
+> **Note.** A `get_escrow` returning `NotFound` for an order that should be active
+> may indicate an archived entry rather than a settled escrow. Check
+> `getLedgerEntries` for the escrow key before treating the order as settled.

@@ -162,4 +162,47 @@ router.post(
   }
 );
 
+// GET /api/farmers/:id/carbon-offsets — total verified kg CO2 across the farmer's orders (#1503).
+// Voided offsets read back as empty from `get_offset`; amended ones return the current value.
+const CARBON_TOTAL_TTL_MS = 10 * 60 * 1000;
+const CARBON_MAX_ORDERS = 200;
+const carbonTotalCache = new Map();
+
+router.get('/:id/carbon-offsets', async (req, res) => {
+  const farmerId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(farmerId) || farmerId <= 0) return err(res, 400, 'Invalid farmer id', 'validation_error');
+  const contractId = process.env.SOROBAN_CARBON_OFFSET_CONTRACT_ID || null;
+  if (!contractId) return res.json({ success: true, data: { configured: false, totalKgCo2: 0, orderCount: 0 } });
+
+  const cached = carbonTotalCache.get(farmerId);
+  if (cached && cached.expires > Date.now()) return res.json({ success: true, data: cached.data });
+
+  const { rows: orders } = await db.query(
+    `SELECT o.id FROM orders o JOIN products p ON o.product_id = p.id
+     WHERE p.farmer_id = $1 AND o.status IN ('paid', 'processing', 'shipped', 'delivered')
+     ORDER BY o.created_at DESC LIMIT ${CARBON_MAX_ORDERS}`,
+    [farmerId]
+  );
+
+  const { getCarbonOffset } = require('../utils/stellar');
+  let totalKgCo2 = 0;
+  let orderCount = 0;
+  for (let i = 0; i < orders.length; i += 10) {
+    const results = await Promise.allSettled(orders.slice(i, i + 10).map((o) => getCarbonOffset(o.id)));
+    for (const r of results) {
+      if (r.status !== 'fulfilled' || !r.value) continue;
+      const offset = typeof r.value === 'object' && 'success' in r.value ? (r.value.success ? r.value.result : null) : r.value;
+      const kg = Number(offset?.kg_co2);
+      if (offset && Number.isFinite(kg) && kg > 0) {
+        totalKgCo2 += kg;
+        orderCount += 1;
+      }
+    }
+  }
+
+  const data = { configured: true, contractId, totalKgCo2, orderCount, ordersScanned: orders.length };
+  carbonTotalCache.set(farmerId, { data, expires: Date.now() + CARBON_TOTAL_TTL_MS });
+  res.json({ success: true, data });
+});
+
 module.exports = router;

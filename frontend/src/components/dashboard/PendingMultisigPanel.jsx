@@ -2,25 +2,47 @@ import React from 'react';
 
 /**
  * PendingMultisigPanel — shows cooperative multi-sig transactions awaiting
- * the farmer's signature.
+ * signatures (FE-30).
  * Extracted from Dashboard.jsx (#1060).
  *
  * Props:
- *   pendingTxs  – array of pending tx objects (with coopName, amount, destination, signatures, expires_at)
- *   signingTxId – id of the tx currently being signed (or null)
- *   onSign      – (txId: number) => void
+ *   pendingTxs  – array of pending tx objects (coopName, amount, destination, order_id?,
+ *                 signatures, threshold, members[{id,name,signed}], payload_hex, alreadySigned, expires_at)
+ *   signingTxId – id of the tx currently being signed/submitted (or null)
+ *   onSign      – (txId: number) => void            sign with the custodial key
+ *   onSignWithFreighter – (tx) => void              sign payload_hex with Freighter
+ *   onSubmit    – (txId: number) => void            submit once threshold is met
  */
-export default function PendingMultisigPanel({ pendingTxs = [], signingTxId = null, onSign }) {
+
+const CONTRACT_ERRORS = {
+  NotEnoughSignatures: 'Not enough member signatures yet — wait for more members to sign.',
+  CoopNotConfigured: 'This cooperative has no multisig configuration. Ask an admin to set up signers.',
+  InvalidCoopConfig: 'The cooperative signer configuration is invalid (check threshold and member count).',
+};
+
+export function multisigErrorMessage(e) {
+  const raw = [e?.code, e?.error, e?.message, typeof e === 'string' ? e : ''].filter(Boolean).join(' ');
+  const key = Object.keys(CONTRACT_ERRORS).find((k) => raw.includes(k));
+  return key ? CONTRACT_ERRORS[key] : e?.message || String(e || 'Something went wrong');
+}
+
+export default function PendingMultisigPanel({
+  pendingTxs = [],
+  signingTxId = null,
+  onSign,
+  onSignWithFreighter,
+  onSubmit,
+}) {
   if (pendingTxs.length === 0) return null;
 
   const s = {
     card: {
-      background: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 1px 8px #0001',
+      borderRadius: 12, padding: 24, boxShadow: '0 1px 8px #0001',
       border: '1px solid #f9a825', background: '#fffde7', marginTop: 24,
     },
     btn: {
       background: '#2d6a4f', color: '#fff', border: 'none', borderRadius: 8,
-      padding: '10px 20px', cursor: 'pointer', fontWeight: 600, minHeight: 44,
+      cursor: 'pointer', fontWeight: 600, minHeight: 44, fontSize: 13, padding: '6px 14px',
     },
   };
 
@@ -29,44 +51,100 @@ export default function PendingMultisigPanel({ pendingTxs = [], signingTxId = nu
       <div style={{ fontSize: 16, fontWeight: 700, color: '#e65100', marginBottom: 12 }}>
         🔏 Pending Signature Requests ({pendingTxs.length})
       </div>
-      {pendingTxs.map((tx) => (
-        <div
-          key={tx.id}
-          style={{
-            borderBottom: '1px solid #ffe082',
-            padding: '10px 0',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: 8,
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>
-              {tx.coopName} — {tx.amount} XLM
-            </div>
-            <div style={{ fontSize: 12, color: '#888' }}>
-              To: {tx.destination?.slice(0, 12)}… · {tx.signatures.length} signature(s) collected
-            </div>
-            <div style={{ fontSize: 11, color: '#aaa' }}>
-              Expires: {new Date(tx.expires_at).toLocaleString()}
-            </div>
-          </div>
-          <button
-            style={{
-              ...s.btn,
-              fontSize: 13,
-              padding: '6px 14px',
-              background: signingTxId === tx.id ? '#888' : '#2d6a4f',
-            }}
-            disabled={signingTxId === tx.id}
-            onClick={() => onSign?.(tx.id)}
+      {pendingTxs.map((tx) => {
+        const collected = tx.signatures?.length ?? 0;
+        const needed = tx.threshold ?? null;
+        const thresholdMet = needed != null && collected >= needed;
+        const busy = signingTxId === tx.id;
+        return (
+          <div
+            key={tx.id}
+            data-testid={`multisig-tx-${tx.id}`}
+            style={{ borderBottom: '1px solid #ffe082', padding: '10px 0' }}
           >
-            {signingTxId === tx.id ? 'Signing…' : '✍️ Sign'}
-          </button>
-        </div>
-      ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>
+                  {tx.coopName} — {tx.amount} XLM
+                  {tx.order_id != null && <span style={{ fontWeight: 400 }}> · Order #{tx.order_id}</span>}
+                </div>
+                <div style={{ fontSize: 12, color: '#555' }}>
+                  To: {tx.destination?.slice(0, 12)}… ·{' '}
+                  <strong>
+                    {collected}
+                    {needed != null ? ` / ${needed}` : ''} signature(s)
+                  </strong>
+                  {needed != null ? ' collected / needed' : ' collected'}
+                </div>
+                <div style={{ fontSize: 11, color: '#777' }}>
+                  Expires: {new Date(tx.expires_at).toLocaleString()}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                {!tx.alreadySigned && !thresholdMet && (
+                  <>
+                    <button
+                      type="button"
+                      style={{ ...s.btn, background: busy ? '#888' : '#2d6a4f' }}
+                      disabled={busy}
+                      onClick={() => onSign?.(tx.id)}
+                    >
+                      {busy ? 'Signing…' : '✍️ Sign'}
+                    </button>
+                    {onSignWithFreighter && tx.payload_hex && (
+                      <button
+                        type="button"
+                        style={{ ...s.btn, background: busy ? '#888' : '#3949ab' }}
+                        disabled={busy}
+                        onClick={() => onSignWithFreighter(tx)}
+                      >
+                        Sign with Freighter
+                      </button>
+                    )}
+                  </>
+                )}
+                {onSubmit && (
+                  <button
+                    type="button"
+                    style={{ ...s.btn, background: thresholdMet && !busy ? '#e65100' : '#bbb' }}
+                    disabled={!thresholdMet || busy}
+                    title={thresholdMet ? 'Submit the release' : 'Waiting for more signatures'}
+                    onClick={() => onSubmit(tx.id)}
+                  >
+                    Submit release
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {Array.isArray(tx.members) && tx.members.length > 0 && (
+              <ul aria-label="Signers" style={{ listStyle: 'none', padding: 0, margin: '6px 0 0', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {tx.members.map((m) => (
+                  <li
+                    key={m.id}
+                    style={{
+                      fontSize: 11, padding: '2px 8px', borderRadius: 999,
+                      background: m.signed ? '#c8e6c9' : '#eee', color: m.signed ? '#1b5e20' : '#555',
+                    }}
+                  >
+                    {m.signed ? '✓' : '○'} {m.name || `Member ${m.id}`}
+                    <span className="sr-only">{m.signed ? ' (signed)' : ' (not signed)'}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {tx.payload_hex && (
+              <details style={{ marginTop: 6, fontSize: 11 }}>
+                <summary>Signing payload (hex)</summary>
+                <code style={{ wordBreak: 'break-all', display: 'block', background: '#fff', padding: 6, borderRadius: 4 }}>
+                  {tx.payload_hex}
+                </code>
+              </details>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

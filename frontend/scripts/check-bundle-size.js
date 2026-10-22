@@ -15,10 +15,12 @@
  *   BUNDLE_INITIAL_BUDGET_KB=600 BUNDLE_TOTAL_BUDGET_KB=6000 node scripts/check-bundle-size.js
  */
 
-import { readdirSync, statSync, writeFileSync } from 'fs';
+import { readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { join, basename } from 'path';
 
 const DIST_ASSETS = join(process.cwd(), 'dist', 'assets');
+const DIST_ROOT = join(process.cwd(), 'dist');
+const MANIFEST_PATH = join(DIST_ROOT, '.vite', 'manifest.json');
 
 // Budgets in kibibytes (1 KiB = 1024 bytes).
 const INITIAL_BUDGET_KB = Number(process.env.BUNDLE_INITIAL_BUDGET_KB ?? 500);
@@ -46,11 +48,31 @@ if (jsFiles.length === 0) {
   process.exit(1);
 }
 
-// Initial chunks = vendor chunk + index/main chunk (everything a user must
-// download before React can render, regardless of which route they visit).
-const initialChunks = jsFiles.filter(
-  f => f.name.startsWith('vendor') || f.name.startsWith('index') || f.name.startsWith('main')
-);
+let manifest;
+try {
+  manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+} catch {
+  console.error('[bundle-size] Vite manifest not found — enable build.manifest and run "npm run build" first.');
+  process.exit(1);
+}
+
+// Walk static imports from every HTML entry. Dynamic imports are route-level
+// chunks and are deliberately excluded from the initial-load budget.
+const initialFiles = new Set();
+const visitedModules = new Set();
+function visitStaticImports(key) {
+  if (visitedModules.has(key) || !manifest[key]) return;
+  visitedModules.add(key);
+  const entry = manifest[key];
+  if (entry.file?.endsWith('.js')) initialFiles.add(entry.file);
+  for (const importedKey of entry.imports ?? []) visitStaticImports(importedKey);
+}
+
+for (const [key, entry] of Object.entries(manifest)) {
+  if (entry.isEntry) visitStaticImports(key);
+}
+
+const initialChunks = jsFiles.filter(f => initialFiles.has(`assets/${f.name}`));
 const initialBytes  = initialChunks.reduce((s, f) => s + f.size, 0);
 const totalBytes    = jsFiles.reduce((s, f) => s + f.size, 0);
 

@@ -29,9 +29,10 @@ export default function AdminOrdersPanel({
   };
 
   return (
-    <div style={s.card}>
+    <div className="admin-panel" style={s.card}>
       <h3 style={{ marginBottom: 16, color: '#333' }}>Orders ({orderPagination.total})</h3>
-      <table style={s.table}>
+      <div className="admin-table-scroll">
+        <table style={s.table}>
         <thead>
           <tr>
             <th style={s.th}>ID</th>
@@ -56,7 +57,8 @@ export default function AdminOrdersPanel({
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
       <div style={s.pagination}>
         <button
           style={s.pgBtn(orderPagination.page <= 1)}

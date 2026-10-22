@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 import { useAuth } from './AuthContext';
+import { safeStorage } from '../utils/safeStorage';
 
 const FavoritesContext = createContext(null);
 
@@ -8,19 +9,12 @@ const lsKey = (userId) => `fm_favorites_${userId}`;
 const GUEST_KEY = 'fm_favorites_guest';
 
 function readFromStorage(storageKey) {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return null;
-    const ids = JSON.parse(raw);
-    if (Array.isArray(ids)) return new Set(ids);
-  } catch { /* ignore */ }
-  return null;
+  const ids = safeStorage.getJSON(storageKey);
+  return Array.isArray(ids) ? new Set(ids) : null;
 }
 
 function writeToStorage(storageKey, favorites) {
-  try {
-    localStorage.setItem(storageKey, JSON.stringify([...favorites]));
-  } catch { /* ignore */ }
+  safeStorage.setJSON(storageKey, [...favorites]);
 }
 
 export function FavoritesProvider({ children }) {
@@ -53,7 +47,7 @@ export function FavoritesProvider({ children }) {
         const toSync = [...guestFavs].filter(id => !serverIds.has(id));
         Promise.all(toSync.map(id => api.addFavorite(id).catch(() => {})));
 
-        try { localStorage.removeItem(GUEST_KEY); } catch { /* ignore */ }
+        safeStorage.remove(GUEST_KEY);
 
         setFavorites(merged);
         writeToStorage(lsKey(user.id), merged);

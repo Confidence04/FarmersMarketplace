@@ -25,3 +25,12 @@
 20 SubmissionWindowClosed
 21 AutoReleaseNotReached
 22 TooManyCoopSigners
+23 InvalidTimeout
+24 InvalidOrderId
+25 InvalidRoyalty
+26 EvidenceLimitReached
+27 NotDisputed
+28 NotInitialized
+29 InvalidParties
+30 InvalidCoopConfig
+31 NotInDispute

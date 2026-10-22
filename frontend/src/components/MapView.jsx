@@ -20,8 +20,12 @@ const s = {
   popup: { minWidth: 180 },
   name: { fontWeight: 700, fontSize: 14, color: '#2d6a4f', marginBottom: 4 },
   price: { fontWeight: 600, color: '#333', fontSize: 13, marginBottom: 4 },
-  farmer: { fontSize: 12, color: '#888', marginBottom: 8 },
-  address: { fontSize: 11, color: '#aaa', marginBottom: 8 },
+  farmer: { fontSize: 12, color: '#595959', marginBottom: 8 },
+  address: { fontSize: 11, color: '#595959', marginBottom: 8 },
+  listAlt: { marginTop: 12, background: '#fff', border: '1px solid #ddd', borderRadius: 10, padding: '10px 14px' },
+  listAltSummary: { cursor: 'pointer', fontWeight: 600, color: '#2d6a4f', fontSize: 14 },
+  listAltItem: { padding: '8px 0', borderTop: '1px solid #eee' },
+  listAltFarmBtn: { background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', textDecoration: 'underline' },
   btn: {
     display: 'inline-block', background: '#2d6a4f', color: '#fff',
     border: 'none', borderRadius: 6, padding: '5px 12px', cursor: 'pointer',
@@ -327,6 +331,9 @@ export default function MapView({ products = [], lat, lng, farmerName, onFarmerC
           </button>
         </div>
       )}
+      <a href="#map-list-alternative" className="skip-link skip-link--map">
+        Skip map and view farms as a list
+      </a>
       <MapContainer
         center={[avgLat, avgLng]}
         zoom={7}
@@ -368,6 +375,48 @@ export default function MapView({ products = [], lat, lng, farmerName, onFarmerC
           </>
         )}
       </MapContainer>
+      <MapListAlternative groups={groups} onFarmerClick={onFarmerClick} />
     </div>
+  );
+}
+
+/**
+ * Keyboard / screen-reader alternative to the map (#1502): the same farms and
+ * products as a plain list of links.
+ */
+export function MapListAlternative({ groups, onFarmerClick }) {
+  const farms = groups.filter((g) => g.farmerName || (g.products && g.products.length));
+  if (farms.length === 0) return null;
+  return (
+    <details id="map-list-alternative" style={s.listAlt} data-testid="map-list-alternative">
+      <summary style={s.listAltSummary}>
+        View {farms.length} farm{farms.length === 1 ? '' : 's'} as a list
+      </summary>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {farms.map((g, i) => (
+          <li key={`${g.lat},${g.lng},${i}`} style={s.listAltItem}>
+            <div style={s.name}>
+              {onFarmerClick && g.products?.[0]?.farmer_id ? (
+                <button type="button" style={s.listAltFarmBtn} onClick={() => onFarmerClick(g.products[0].farmer_id)}>
+                  {g.farmerName || 'Farm'}
+                </button>
+              ) : (
+                g.farmerName || 'Farm'
+              )}
+            </div>
+            {g.products?.length > 0 && (
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {g.products.map((p) => (
+                  <li key={p.id} style={{ fontSize: 13, marginBottom: 2 }}>
+                    <a href={`/product/${p.id}`} style={{ color: '#2d6a4f' }}>{p.name}</a>
+                    {p.price != null && ` — ${p.price} XLM${p.unit ? `/${p.unit}` : ''}`}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

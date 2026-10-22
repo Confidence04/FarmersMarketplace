@@ -36,7 +36,7 @@ export default function PaymentStreams({ streams, streamsMsg, streamActionId, pu
                   Accrued: <StreamAccrual accrued={stream.accrued} asOf={stream.as_of ?? stream.asOf} rate={stream.rate} /> XLM
                 </div>
               </div>
-              <div style={{ flexShrink: 0, marginLeft: 12, display: 'flex', gap: 8 }}>
+              <div style={{ flexShrink: 0, marginLeft: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {isSender ? (
                   <>
                     <button style={s.btnOutline} disabled={streamActionId === stream.id} onClick={() => decreaseStreamRate(stream.id, stream.rate)}>

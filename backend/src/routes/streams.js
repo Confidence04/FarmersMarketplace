@@ -49,6 +49,14 @@ function toClientStream(row, callerAddress) {
     as_of: new Date(nowSec * 1000).toISOString(),
     ends_at: new Date(Number(row.end_time) * 1000).toISOString(),
     cancelled: !!row.cancelled,
+    // Raw contract fields so the client can mirror get_accrued_amount exactly (FE-31).
+    rate_per_second: String(row.rate_per_second),
+    deposit_stroops: String(row.deposit),
+    accrued_at_checkpoint: String(row.accrued_at_checkpoint || 0),
+    last_checkpoint_at: Number(row.last_checkpoint_at) || 0,
+    start_time: Number(row.start_time) || null,
+    end_time: Number(row.end_time),
+    withdrawn: String(row.withdrawn || 0),
   };
 }
 
@@ -116,6 +124,12 @@ router.post('/:id/withdraw', auth, async (req, res, next) => {
 router.post('/:id/cancel', auth, async (req, res, next) => {
   const row = await getParticipantStream(req, res);
   if (row) forward(req, res, next, `/${row.contract_id}/${row.stream_id}/cancel`, {});
+});
+
+// POST /api/streams/:id/top-up — Body: { amount } (sender only)
+router.post('/:id/top-up', auth, async (req, res, next) => {
+  const row = await getParticipantStream(req, res);
+  if (row) forward(req, res, next, `/${row.contract_id}/${row.stream_id}/top-up`, { amount: Number(req.body?.amount) });
 });
 
 // PATCH /api/streams/:id/decrease-rate — Body: { rate }

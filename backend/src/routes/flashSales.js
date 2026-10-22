@@ -1,10 +1,11 @@
 const router = require('express').Router();
 const db = require('../db/schema');
 const auth = require('../middleware/auth');
+const validate = require('../middleware/validate');
 const { err } = require('../middleware/error');
 const { invalidateProductCache } = require('../cache');
 
-router.patch('/:id/flash-sale', auth, async (req, res) => {
+router.patch('/:id/flash-sale', auth, validate.flashSale, async (req, res) => {
   if (req.user.role !== 'farmer')
     return err(res, 403, 'Only farmers can manage flash sales', 'forbidden');
 
@@ -20,7 +21,10 @@ router.patch('/:id/flash-sale', auth, async (req, res) => {
     ? new Date(req.body.flash_sale_starts_at)
     : null;
 
-  const { rows } = await db.query('SELECT id, farmer_id, price, flash_sale_ends_at FROM products WHERE id = $1', [id]);
+  const { rows } = await db.query(
+    'SELECT id, farmer_id, price, flash_sale_ends_at FROM products WHERE id = $1',
+    [id]
+  );
   const product = rows[0];
   if (!product) return err(res, 404, 'Product not found', 'not_found');
   if (product.farmer_id !== req.user.id) return err(res, 403, 'Not your product', 'forbidden');
@@ -28,7 +32,12 @@ router.patch('/:id/flash-sale', auth, async (req, res) => {
   if (flashSalePrice != null) {
     // Check for overlapping flash sales
     if (product.flash_sale_ends_at && new Date(product.flash_sale_ends_at) > new Date()) {
-      return err(res, 409, 'Cannot create overlapping flash sales on the same product', 'flash_sale_overlap');
+      return err(
+        res,
+        409,
+        'Cannot create overlapping flash sales on the same product',
+        'flash_sale_overlap'
+      );
     }
     if (!Number.isFinite(flashSalePrice) || flashSalePrice <= 0) {
       return err(res, 400, 'flash_sale_price must be a positive number', 'validation_error');
@@ -53,13 +62,23 @@ router.patch('/:id/flash-sale', auth, async (req, res) => {
       );
     }
     if (flashSaleStartsAt >= flashSaleEndsAt) {
-      return err(res, 400, 'flash_sale_starts_at must be before flash_sale_ends_at', 'validation_error');
+      return err(
+        res,
+        400,
+        'flash_sale_starts_at must be before flash_sale_ends_at',
+        'validation_error'
+      );
     }
   }
 
   await db.query(
     'UPDATE products SET flash_sale_price = $1, flash_sale_ends_at = $2, flash_sale_starts_at = $3 WHERE id = $4',
-    [flashSalePrice, flashSaleEndsAt ? flashSaleEndsAt.toISOString() : null, flashSaleStartsAt ? flashSaleStartsAt.toISOString() : null, id]
+    [
+      flashSalePrice,
+      flashSaleEndsAt ? flashSaleEndsAt.toISOString() : null,
+      flashSaleStartsAt ? flashSaleStartsAt.toISOString() : null,
+      id,
+    ]
   );
 
   await invalidateProductCache(id);

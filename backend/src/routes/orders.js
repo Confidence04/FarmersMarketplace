@@ -28,7 +28,10 @@ const {
   getCarbonOffset,
   generatePaymentLink,
   getMemo,
+  isTestnet,
+  server: horizonServer,
 } = require('../utils/stellar');
+const StellarSdk = require('@stellar/stellar-sdk');
 const { estimateCarbonFootprint } = require('../utils/carbon');
 const { getPathPaymentSendMax } = require('../utils/stellar-payments');
 const {
@@ -50,6 +53,7 @@ const { broadcastStockUpdate } = require('../utils/stockUpdates');
 const { couponNowExpression } = require('../utils/couponTime');
 const { decryptUserSecretKey } = require('../utils/crypto');
 const { transition } = require('../models/orderStatus');
+const { getRewardSummary, maxRedeemableTokens, redeemRewardTokens, reissueRedeemedTokens } = require('../utils/rewardTokens');
 
 // XLM per kg per km
 const SHIPPING_RATE = 0.001;
@@ -102,7 +106,9 @@ router.get('/fee-preview', (req, res) => {
   const amount = parseFloat(req.query.amount);
   if (!amount || amount <= 0) return res.status(400).json({ error: 'amount is required' });
   const info = getPlatformFeeInfo(amount);
-  res.json({ success: true, total: amount, ...info });
+  // Escrowed orders auto-release to the farmer after this many days (FE-16 shows it at checkout).
+  const autoReleaseDays = parseInt(process.env.SOROBAN_ESCROW_TIMEOUT_DAYS || '14', 10);
+  res.json({ success: true, total: amount, ...info, auto_release_days: autoReleaseDays });
 });
 
 // GET /api/orders/path-estimate — public DEX routing estimate (no auth required)
@@ -557,7 +563,38 @@ router.post('/', auth, requireEmailVerified, orderRateLimit, validate.order, asy
     logger.warn('[orders] Bundle discount lookup failed', { error: error.message });
   }
 
-  const totalPrice = parseFloat((subtotal - discount - bundleDiscount).toFixed(7));
+  const preRewardTotal = parseFloat((subtotal - discount - bundleDiscount).toFixed(7));
+
+  // Reward tokens (#1504): capped by vested balance and max_redemption_bps × order total.
+  let rewardTokens = 0;
+  let rewardDiscount = 0;
+  let rewardRedeemTxHash = null;
+  const requestedRewardTokens = parseInt(req.body.reward_tokens, 10) || 0;
+  if (requestedRewardTokens > 0) {
+    if (req.body.payment_method === 'sep7' || (_sourceAssetCode && _sourceAssetCode !== 'XLM')) {
+      return err(res, 422, 'Reward tokens can only be redeemed on direct XLM payments', 'reward_redemption_unsupported');
+    }
+    let summary;
+    try {
+      summary = await getRewardSummary(buyer.stellar_public_key);
+    } catch (e) {
+      return err(res, 502, 'Unable to read reward token balance: ' + e.message, 'reward_lookup_failed');
+    }
+    if (!summary.configured) return err(res, 422, 'Reward tokens are not enabled', 'rewards_disabled');
+    const maxTokens = maxRedeemableTokens({
+      vested: summary.vested,
+      maxRedemptionBps: summary.maxRedemptionBps,
+      orderTotal: preRewardTotal,
+      xlmPerToken: summary.xlmPerToken,
+    });
+    if (requestedRewardTokens > maxTokens) {
+      return err(res, 422, `You can redeem at most ${maxTokens} reward tokens on this order`, 'reward_redemption_exceeds_limit');
+    }
+    rewardTokens = requestedRewardTokens;
+    rewardDiscount = parseFloat((rewardTokens * summary.xlmPerToken).toFixed(7));
+  }
+
+  const totalPrice = parseFloat((preRewardTotal - rewardDiscount).toFixed(7));
   if (totalPrice <= 0)
     return err(res, 422, 'Coupon discount must leave a positive order total', 'zero_order_total');
 
@@ -715,27 +752,29 @@ router.post('/', auth, requireEmailVerified, orderRateLimit, validate.order, asy
       paymentLink,
       message: 'Order created for SEP-0007 payment',
     };
-    if (idempotencyKey) await cacheResponse(idempotencyKey, { ...responseData, _status: 200 });
-    return res.json(responseData);
     if (idempotencyKey) await cacheResponse(idempotencyKey, { ...responseData, _status: 200 }, undefined, req.user.id);
     return res.status(200).json(responseData);
-  const stockUpdate = await db.query(
-    `UPDATE products
-     SET quantity = quantity - $1
-     WHERE id = $2 AND quantity >= $1`,
-    [quantity, product_id]
-  );
-  if (!stockUpdate.rowCount || stockUpdate.rowCount === 0) {
-    return err(res, 409, 'Insufficient stock for this product', 'out_of_stock');
   }
 
-  let couponUseId = null;
-  if (appliedCoupon) {
-    couponUseId = await reserveCoupon(appliedCoupon.id, req.user.id);
-    if (couponUseId == null) {
-      await db.query('UPDATE orders SET status = $1 WHERE id = $2', ['failed', orderId]);
+  // Reward token redemption (#1504) — burn before paying so the discount is never given for free.
+  if (rewardTokens > 0) {
+    try {
+      rewardRedeemTxHash = await redeemRewardTokens({
+        buyerSecret: await decryptUserSecretKey(buyer.stellar_secret_key),
+        buyerPublicKey: buyer.stellar_public_key,
+        orderId,
+        amount: rewardTokens,
+      });
+      await db.query(
+        'UPDATE orders SET reward_tokens_redeemed = $1, reward_discount = $2, reward_redeem_tx_hash = $3 WHERE id = $4',
+        [rewardTokens, rewardDiscount, rewardRedeemTxHash, orderId]
+      );
+    } catch (e) {
+      logger.warn('[Rewards] Redemption failed', { orderId, error: e.message });
+      if (couponUseId != null) await releaseCoupon(appliedCoupon.id, req.user.id, couponUseId);
+      await transition(orderId, 'pending', 'failed', { actor: 'checkout', reason: 'reward_redemption_failed' });
       await restoreProductStock(product_id, quantity);
-      return err(res, 409, 'Coupon usage limit reached', 'coupon_exhausted');
+      return err(res, 402, 'Reward token redemption failed: ' + e.message, 'reward_redemption_failed');
     }
   }
 
@@ -875,6 +914,7 @@ router.post('/', auth, requireEmailVerified, orderRateLimit, validate.order, asy
     if (rewardAmount > 0 && buyer.stellar_public_key) {
       try {
         Promise.resolve(mintRewardTokens(buyer.stellar_public_key, rewardAmount))
+          .then((mintHash) => mintHash && db.query('UPDATE orders SET reward_mint_tx_hash = $1 WHERE id = $2', [mintHash, orderId]))
           .catch((e) => logger.warn('[Rewards] Mint failed (non-fatal):', { error: e.message }));
       } catch (e) {
         logger.warn('[Rewards] Mint failed (non-fatal):', { error: e.message });
@@ -897,6 +937,7 @@ router.post('/', auth, requireEmailVerified, orderRateLimit, validate.order, asy
       preorderDeliveryDate: product.preorder_delivery_date || null,
       claimableBalanceId: balanceId,
       sourceAsset: usePathPayment ? _sourceAssetCode : 'XLM',
+      rewardRedemption: rewardTokens > 0 ? { tokens: rewardTokens, discount: rewardDiscount, txHash: rewardRedeemTxHash } : undefined,
     };
     if (idempotencyKey) await cacheResponse(idempotencyKey, { ...responseData, _status: 200 }, undefined, req.user.id);
     return res.status(200).json(responseData);
@@ -910,6 +951,10 @@ router.post('/', auth, requireEmailVerified, orderRateLimit, validate.order, asy
       await db.query('DELETE FROM orders WHERE id = $1', [orderId]);
       await restoreProductStock(product_id, quantity);
       return res.status(402).json({ success: false, code: 'no_payment_path', message: e.message || 'Path payment could not be completed' });
+    }
+    if (rewardRedeemTxHash) {
+      reissueRedeemedTokens({ buyerPublicKey: buyer.stellar_public_key, orderId, amount: rewardTokens })
+        .catch((re) => logger.error('[Rewards] Reissue after failed payment failed', { orderId, error: re.message }));
     }
     await transition(orderId, 'pending', 'failed', { actor: 'checkout', reason: e.code || 'payment_failed' });
     await restoreProductStock(product_id, quantity);
@@ -944,7 +989,11 @@ router.get('/', auth, async (req, res) => {
             hb.batch_code as harvest_batch_code, hb.harvest_date as harvest_batch_date, hb.notes as harvest_batch_notes,
             a.label as address_label, a.street as address_street, a.city as address_city,
             a.country as address_country, a.postal_code as address_postal_code,
-            rr.status as return_status, rr.reason as return_reason, rr.reject_reason, rr.refund_tx_hash
+            rr.status as return_status, rr.reason as return_reason, rr.reject_reason, rr.refund_tx_hash,
+            (SELECT h.reason FROM order_status_history h
+              WHERE h.order_id = o.id AND h.to_status = 'failed'
+              ORDER BY h.created_at DESC, h.id DESC LIMIT 1) as failure_reason
+            (SELECT d.id FROM disputes d WHERE d.order_id = o.id) as dispute_id
      FROM orders o
      JOIN products p ON o.product_id = p.id
      JOIN users u ON p.farmer_id = u.id
@@ -995,7 +1044,8 @@ router.get('/sales', auth, async (req, res) => {
             hb.batch_code as harvest_batch_code, hb.harvest_date as harvest_batch_date, hb.notes as harvest_batch_notes,
             a.label as address_label, a.street as address_street, a.city as address_city,
             a.country as address_country, a.postal_code as address_postal_code,
-            rr.status as return_status, rr.reason as return_reason, rr.reject_reason, rr.refund_tx_hash
+            rr.status as return_status, rr.reason as return_reason, rr.reject_reason, rr.refund_tx_hash,
+            (SELECT d.id FROM disputes d WHERE d.order_id = o.id) as dispute_id
      FROM orders o
      JOIN products p ON o.product_id = p.id
      JOIN users u ON o.buyer_id = u.id
@@ -1018,6 +1068,49 @@ router.get('/sales', auth, async (req, res) => {
   }));
 
   res.json({ success: true, data, total, page, limit, totalPages: Math.ceil(total / limit) });
+});
+
+// GET /api/orders/:id/history — status timeline from order_status_history + escrow state (#1501)
+router.get('/:id/history', auth, async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT o.*, p.farmer_id FROM orders o JOIN products p ON o.product_id = p.id WHERE o.id = $1`,
+    [req.params.id]
+  );
+  const order = rows[0];
+  if (!order) return err(res, 404, 'Order not found', 'not_found');
+  if (order.buyer_id !== req.user.id && order.farmer_id !== req.user.id && req.user.role !== 'admin') {
+    return err(res, 403, 'Forbidden', 'forbidden');
+  }
+
+  const { rows: history } = await db.query(
+    `SELECT from_status, to_status, reason, created_at
+     FROM order_status_history WHERE order_id = $1
+     ORDER BY created_at ASC, id ASC`,
+    [order.id]
+  );
+
+  const escrowed = !!(order.escrow_status || (order.escrow_balance_id && String(order.escrow_balance_id).startsWith('soroban:')));
+  let autoReleaseAt = null;
+  if (escrowed) {
+    const timeoutDays = parseInt(process.env.SOROBAN_ESCROW_TIMEOUT_DAYS || '14', 10);
+    const createdMs = new Date(order.created_at).getTime();
+    if (Number.isFinite(createdMs)) autoReleaseAt = new Date(createdMs + timeoutDays * 86400000).toISOString();
+  }
+  const failed = [...history].reverse().find((h) => h.to_status === 'failed');
+
+  res.json({
+    success: true,
+    data: {
+      id: order.id,
+      status: order.status,
+      created_at: order.created_at,
+      failure_reason: failed ? failed.reason : null,
+      history,
+      escrow: escrowed
+        ? { state: order.escrow_status || 'held', auto_release_at: autoReleaseAt }
+        : null,
+    },
+  });
 });
 
 // PATCH /api/orders/:id/status
@@ -1301,6 +1394,103 @@ router.get('/:id/payment-link', auth, async (req, res) => {
   });
 });
 
+// Non-custodial checkout (FE-15). The order is created with payment_method
+// 'sep7' (pending, no server-side signing); the buyer's external wallet then
+// signs the XDR returned by /prepare and hands it back to /submit.
+const EXTERNAL_PAY_WINDOW_MS = 30 * 60 * 1000;
+const externalNetworkPassphrase = isTestnet ? StellarSdk.Networks.TESTNET : StellarSdk.Networks.PUBLIC;
+
+async function loadExternalPayOrder(req, res) {
+  const { rows } = await db.query(
+    `SELECT o.*, u.stellar_public_key AS farmer_public_key
+     FROM orders o JOIN products p ON o.product_id = p.id JOIN users u ON p.farmer_id = u.id
+     WHERE o.id = $1`,
+    [req.params.id]
+  );
+  const order = rows[0];
+  if (!order) return err(res, 404, 'Order not found', 'not_found');
+  if (order.buyer_id !== req.user.id) return err(res, 403, 'Forbidden', 'forbidden');
+  if (order.status !== 'pending') return err(res, 409, 'Order is no longer awaiting payment', 'invalid_order_state');
+  if (Date.now() - new Date(order.created_at).getTime() >= EXTERNAL_PAY_WINDOW_MS)
+    return err(res, 410, 'Payment window has expired', 'payment_link_expired');
+  return order;
+}
+
+// POST /api/orders/:id/prepare — build an unsigned payment XDR for an external wallet
+router.post('/:id/prepare', auth, async (req, res) => {
+  const publicKey = String(req.body?.public_key || '');
+  if (!StellarSdk.StrKey.isValidEd25519PublicKey(publicKey))
+    return err(res, 400, 'A valid Stellar public key is required', 'validation_error');
+  const order = await loadExternalPayOrder(req, res);
+  if (!order || res.headersSent) return;
+  try {
+    const source = await horizonServer.loadAccount(publicKey);
+    const tx = new StellarSdk.TransactionBuilder(source, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: externalNetworkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.payment({
+          destination: order.farmer_public_key,
+          asset: StellarSdk.Asset.native(),
+          amount: Number(order.total_price).toFixed(7),
+        })
+      )
+      .addMemo(StellarSdk.Memo.text(`order:${order.id}`))
+      .setTimeout(300)
+      .build();
+    res.json({
+      success: true,
+      xdr: tx.toXDR(),
+      networkPassphrase: externalNetworkPassphrase,
+      network: isTestnet ? 'TESTNET' : 'PUBLIC',
+    });
+  } catch (e) {
+    if (e?.response?.status === 404) return err(res, 400, 'Source account not found on the network', 'account_not_found');
+    logger.error('[orders] prepare external payment failed', { error: e.message });
+    return err(res, 502, 'Unable to prepare transaction', 'prepare_failed');
+  }
+});
+
+// POST /api/orders/:id/submit — verify and submit the externally signed XDR
+router.post('/:id/submit', auth, async (req, res) => {
+  const signedXdr = String(req.body?.signed_xdr || '');
+  if (!signedXdr) return err(res, 400, 'signed_xdr is required', 'validation_error');
+  const order = await loadExternalPayOrder(req, res);
+  if (!order || res.headersSent) return;
+
+  let tx;
+  try {
+    tx = StellarSdk.TransactionBuilder.fromXDR(signedXdr, externalNetworkPassphrase);
+  } catch {
+    return err(res, 400, 'Invalid transaction XDR', 'invalid_xdr');
+  }
+  // The signed tx must be exactly the payment /prepare built: one native payment
+  // of the order total to the farmer, tagged with this order's memo.
+  const op = tx.operations?.[0];
+  const memoOk = tx.memo?.type === 'text' && String(tx.memo.value) === `order:${order.id}`;
+  if (
+    tx.operations?.length !== 1 ||
+    op.type !== 'payment' ||
+    op.destination !== order.farmer_public_key ||
+    !op.asset.isNative() ||
+    Number(op.amount) !== Number(Number(order.total_price).toFixed(7)) ||
+    !memoOk
+  )
+    return err(res, 400, 'Transaction does not match this order', 'xdr_mismatch');
+
+  try {
+    const result = await horizonServer.submitTransaction(tx);
+    await transition(order.id, 'pending', 'paid', { actor: req.user.id, reason: 'external_wallet_payment' });
+    await db.query('UPDATE orders SET stellar_tx_hash = $1 WHERE id = $2', [result.hash, order.id]);
+    res.json({ success: true, orderId: order.id, txHash: result.hash, totalPrice: order.total_price });
+  } catch (e) {
+    const codes = e?.response?.data?.extras?.result_codes;
+    logger.warn('[orders] external payment submission failed', { error: e.message, codes });
+    return err(res, 402, 'Transaction submission failed', 'payment_failed');
+  }
+});
+
 // SSE clients map: userId -> Set of response objects
 const orderClients = new Map();
 
@@ -1360,7 +1550,8 @@ router.get('/:id/carbon', auth, async (req, res) => {
   }
 
   try {
-    const offset = await getCarbonOffset(order.id);
+    const sim = await getCarbonOffset(order.id);
+    const offset = sim && typeof sim === 'object' && 'success' in sim ? (sim.success ? sim.result : null) : sim;
     if (!offset) {
       return err(res, 404, 'No carbon offset record found for this order', 'not_found');
     }
@@ -1369,6 +1560,9 @@ router.get('/:id/carbon', auth, async (req, res) => {
       success: true,
       data: {
         ...offset,
+        kg_co2: Number(offset.kg_co2 ?? 0),
+        order_id: Number(offset.order_id ?? order.id),
+        contractId: process.env.SOROBAN_CARBON_OFFSET_CONTRACT_ID || null,
         certificateUrl: `${base}/orders/${order.id}/carbon-certificate`,
       },
     });

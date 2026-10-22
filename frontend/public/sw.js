@@ -15,6 +15,54 @@ const PUBLIC_API_ALLOWLIST = [
   /^\/api\/v1\/rates(\/|$)/,
 ];
 
+const PRODUCT_CACHE = 'fm-products';
+const IMAGE_CACHE = 'fm-images';
+const MAX_PRODUCT_PAGES = 20;
+const MAX_IMAGES = 200;
+
+// Authenticated responses are sent with Cache-Control: private, no-store
+// and must never be written to Cache Storage.
+function isStorable(response) {
+  if (!response || !response.ok || response.status !== 200) return false;
+  const cc = (response.headers.get('Cache-Control') || '').toLowerCase();
+  return !cc.includes('no-store') && !cc.includes('private');
+}
+
+async function trimCache(name, max, filter = () => true) {
+  const cache = await caches.open(name);
+  const keys = (await cache.keys()).filter(filter);
+  // Cache keys are returned in insertion order, so drop the oldest first.
+  await Promise.all(keys.slice(0, Math.max(0, keys.length - max)).map((k) => cache.delete(k)));
+}
+
+const isProductDetail = (req) => /^\/api\/v1\/products\/[^/]+$/.test(new URL(req.url).pathname);
+
+function staleWhileRevalidate(event, cacheName, onStored) {
+  const { request } = event;
+  return (async () => {
+    const cache = await caches.open(cacheName);
+    const cached = await cache.match(request);
+    const network = fetch(request).then(async (response) => {
+      if (isStorable(response)) {
+        // Re-insert so the entry moves to the end (most recently viewed).
+        await cache.delete(request);
+        await cache.put(request, response.clone());
+        if (onStored) await onStored();
+      }
+      return response;
+    }).catch(() => null);
+    if (cached) {
+      event.waitUntil(network);
+      return cached;
+    }
+    const fresh = await network;
+    return fresh || new Response(JSON.stringify({ error: 'offline' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  })();
+}
+
 function isCacheableApiRequest(request, url) {
   if (request.method !== 'GET') return false;
   // Never cache anything that carries credentials/authorization.
@@ -37,7 +85,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => ![CACHE_NAME, PRODUCT_CACHE, IMAGE_CACHE].includes(k)).map((k) => caches.delete(k)))
       )
       .then(() => self.clients.claim())
       .then(() =>
@@ -102,27 +150,17 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Product listing API: stale-while-revalidate. Gated by the same allowlist
-  // as the generic API branch so only public, unauthenticated products are cached.
+  // Products API (marketplace list + last 20 viewed product pages):
+  // stale-while-revalidate, gated by the public allowlist.
   if (isCacheableApiRequest(request, url) && url.pathname.startsWith('/api/v1/products')) {
-    event.respondWith(
-      (async () => {
-        const cached = await caches.match(request);
-        const fetchPromise = fetch(request).then((response) => {
-          if (response.ok && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        }).catch(() => null);
-        if (cached) return cached;
-        const fresh = await fetchPromise;
-        return fresh || new Response(JSON.stringify({ error: 'offline' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      })()
-    );
+    event.respondWith(staleWhileRevalidate(event, PRODUCT_CACHE, () =>
+      isProductDetail(request) ? trimCache(PRODUCT_CACHE, MAX_PRODUCT_PAGES, isProductDetail) : null));
+    return;
+  }
+
+  // Product images: stale-while-revalidate with a bounded cache.
+  if (request.method === 'GET' && (request.destination === 'image' || url.pathname.startsWith('/uploads/'))) {
+    event.respondWith(staleWhileRevalidate(event, IMAGE_CACHE, () => trimCache(IMAGE_CACHE, MAX_IMAGES)));
     return;
   }
 
@@ -134,7 +172,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (cacheable && response.ok) {
+          if (cacheable && isStorable(response)) {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }

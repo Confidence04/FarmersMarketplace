@@ -1,14 +1,26 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { useSearchParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, newIdempotencyKey } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Spinner from '../components/Spinner';
+import Pagination from '../components/Pagination';
+import { normalizePage } from '../hooks/usePaginatedQuery';
 import { useNetwork } from '../context/NetworkContext';
+import OrderStatusTimeline from '../components/orders/OrderStatusTimeline';
+import CarbonOffsetBadge from '../components/CarbonOffsetBadge';
+import { useModalA11y } from '../hooks/useModalA11y';
+import OpenDisputeModal from '../components/disputes/OpenDisputeModal';
+import DisputeDetail from '../components/disputes/DisputeDetail';
 
 import { getErrorMessage } from '../utils/errorMessages';
+// Poll orders stuck in `confirming` until confirmPayments settles them (#1501).
+export const CONFIRMING_POLL_MS = 5000;
+export const CONFIRMING_POLL_MAX_MS = 2 * 60 * 1000;
+
 const ALL_STATUSES = [
   'pending',
+  'confirming',
   'paid',
   'processing',
   'shipped',
@@ -23,6 +35,8 @@ const FILTER_TABS = ['all', ...ALL_STATUSES];
 const STATUS_STYLE = {
   paid: { bg: '#d8f3dc', color: '#2d6a4f' },
   pending: { bg: '#fff3cd', color: '#856404' },
+  confirming: { bg: '#fff3cd', color: '#856404' },
+  returned: { bg: '#e8d5f5', color: '#6a0dad' },
   processing: { bg: '#cce5ff', color: '#004085' },
   shipped: { bg: '#d1ecf1', color: '#0c5460' },
   delivered: { bg: '#d4edda', color: '#155724' },
@@ -34,6 +48,8 @@ const STATUS_STYLE = {
 
 const STATUS_ICON = {
   pending: '⏳',
+  confirming: '🔄',
+  returned: '📤',
   paid: '✅',
   processing: '⚙️',
   shipped: '🚚',
@@ -43,9 +59,6 @@ const STATUS_ICON = {
   cancelled: '🚫',
   refunded: '↩️',
 };
-
-// Timeline steps shown in order detail
-const TIMELINE_STEPS = ['pending', 'paid', 'processing', 'shipped', 'delivered'];
 
 const s = {
   page: { maxWidth: 900, margin: '0 auto', padding: 24 },
@@ -104,17 +117,6 @@ const s = {
   empty: { padding: '48px 20px', textAlign: 'center', color: '#aaa', fontSize: 15 },
   right: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 },
   price: { fontWeight: 700, fontSize: 16, color: '#2d6a4f' },
-  timeline: { display: 'flex', alignItems: 'center', gap: 0, marginTop: 10, flexWrap: 'wrap' },
-  step: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    fontSize: 10,
-    color: '#bbb',
-    minWidth: 60,
-  },
-  stepDot: { width: 10, height: 10, borderRadius: '50%', background: '#ddd', marginBottom: 3 },
-  stepLine: { flex: 1, height: 2, background: '#eee', minWidth: 20 },
   filters: { display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' },
   filterLabel: { fontSize: 13, color: '#555', whiteSpace: 'nowrap' },
   dateInput: {
@@ -171,6 +173,8 @@ function StatusTimeline({ status }) {
   );
 }
 
+const ORDERS_PAGE_SIZE = 20;
+
 export default function Orders() {
   const { explorerUrl } = useNetwork();
   const [allOrders, setAllOrders] = useState([]);
@@ -181,6 +185,16 @@ export default function Orders() {
   const dateFrom = searchParams.get('date_from') || '';
   const dateTo = searchParams.get('date_to') || '';
   const sortBy = searchParams.get('sort') || 'newest';
+  // FE-21: page number lives in the URL (?page=3); filter changes reset it.
+  const page = Math.max(1, Number(searchParams.get('page')) || 1);
+  const [total, setTotal] = useState(0);
+
+  const setPage = (next) => {
+    const p = new URLSearchParams(searchParams);
+    if (next <= 1) p.delete('page'); else p.set('page', String(next));
+    setSearchParams(p);
+    window.scrollTo?.(0, 0);
+  };
 
   const setActiveTab = (tab) => {
     const p = {};
@@ -220,6 +234,11 @@ export default function Orders() {
   const [exporting, setExporting] = useState(null);
   const [exportError, setExportError] = useState(null);
   const [receiptError, setReceiptError] = useState({});
+  const [retryingId, setRetryingId] = useState(null);
+  const [retryMsg, setRetryMsg] = useState({});
+  const returnDialogRef = useModalA11y(returnModal != null, () => setReturnModal(null));
+  const [disputeTarget, setDisputeTarget] = useState(null); // order being disputed
+  const [disputeViewId, setDisputeViewId] = useState(null); // order id whose dispute is shown
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -230,11 +249,15 @@ export default function Orders() {
       if (dateFrom) params.date_from = dateFrom;
       if (dateTo) params.date_to = dateTo;
       if (sortBy !== 'newest') params.sort = sortBy;
+      params.page = page;
+      params.limit = ORDERS_PAGE_SIZE;
       const [data, bundleData] = await Promise.all([
         api.getOrders(params),
         api.getBundleOrders().catch(() => ({ data: [] })),
       ]);
-      setAllOrders(Array.isArray(data) ? data : (data?.data ?? []));
+      const res = normalizePage(data);
+      setAllOrders(res.items);
+      setTotal(res.total);
       setBundleOrders(bundleData?.data ?? []);
     } catch (err) {
       setError(getErrorMessage(err));
@@ -242,7 +265,7 @@ export default function Orders() {
     } finally {
       setLoading(false);
     }
-  }, [activeTab, dateFrom, dateTo, sortBy]);
+  }, [activeTab, dateFrom, dateTo, sortBy, page]);
 
   useEffect(() => {
     load();
@@ -287,6 +310,49 @@ export default function Orders() {
       }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll `confirming` orders every 5 s, giving up after 2 min (SSE also pushes updates).
+  const confirmingIds = allOrders.filter((o) => o.status === 'confirming').map((o) => o.id).join(',');
+  useEffect(() => {
+    if (!confirmingIds) return undefined;
+    const ids = confirmingIds.split(',').map(Number);
+    const startedAt = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - startedAt >= CONFIRMING_POLL_MAX_MS) {
+        clearInterval(timer);
+        return;
+      }
+      const results = await Promise.allSettled(ids.map((id) => api.getOrderStatus(id)));
+      const updates = {};
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled' && r.value?.status) updates[ids[i]] = r.value.status;
+      });
+      if (Object.keys(updates).length) {
+        setAllOrders((prev) =>
+          prev.map((o) => (updates[o.id] && updates[o.id] !== o.status ? { ...o, status: updates[o.id] } : o))
+        );
+      }
+    }, CONFIRMING_POLL_MS);
+    return () => clearInterval(timer);
+  }, [confirmingIds]);
+
+  async function handleRetry(order) {
+    setRetryingId(order.id);
+    setRetryMsg((prev) => ({ ...prev, [order.id]: '' }));
+    try {
+      const body = { product_id: order.product_id, quantity: order.quantity };
+      if (order.address_id) body.address_id = order.address_id;
+      if (order.weight) body.weight = order.weight;
+      if (order.custom_price) body.custom_price = order.custom_price;
+      const res = await api.placeOrder(body, newIdempotencyKey());
+      setRetryMsg((prev) => ({ ...prev, [order.id]: `New order #${res.orderId} placed.` }));
+      load();
+    } catch (e) {
+      setRetryMsg((prev) => ({ ...prev, [order.id]: getErrorMessage(e) }));
+    } finally {
+      setRetryingId(null);
+    }
+  }
 
   async function handleClaim(orderId) {
     setClaimingId(orderId);
@@ -537,24 +603,27 @@ export default function Orders() {
           </div>
 
           <div style={s.filters}>
-            <span style={s.filterLabel}>From:</span>
+            <label htmlFor="orders-date-from" style={s.filterLabel}>From:</label>
             <input
+              id="orders-date-from"
               type="date"
               style={s.dateInput}
               value={dateFrom}
               max={dateTo || undefined}
               onChange={(e) => setFilterParam('date_from', e.target.value)}
             />
-            <span style={s.filterLabel}>To:</span>
+            <label htmlFor="orders-date-to" style={s.filterLabel}>To:</label>
             <input
+              id="orders-date-to"
               type="date"
               style={s.dateInput}
               value={dateTo}
               min={dateFrom || undefined}
               onChange={(e) => setFilterParam('date_to', e.target.value)}
             />
-            <span style={s.filterLabel}>Sort:</span>
+            <label htmlFor="orders-sort" style={s.filterLabel}>Sort:</label>
             <select
+              id="orders-sort"
               style={s.sortSelect}
               value={sortBy}
               onChange={(e) =>
@@ -670,7 +739,19 @@ export default function Orders() {
                           📝 Memo: <span style={{ fontFamily: 'monospace' }}>{o.stellar_memo}</span>
                         </div>
                       )}
-                      <StatusTimeline status={o.status} />
+                      <OrderStatusTimeline
+                        order={o}
+                        onRetry={handleRetry}
+                        retrying={retryingId === o.id}
+                      />
+                      {retryMsg[o.id] && (
+                        <div role="status" style={{ fontSize: 12, color: '#444', marginTop: 4 }}>
+                          {retryMsg[o.id]}
+                        </div>
+                      )}
+                      {['paid', 'processing', 'shipped', 'delivered'].includes(o.status) && (
+                        <CarbonOffsetBadge orderId={o.id} />
+                      )}
                       {o.harvest_batch_code && (
                         <div style={{ fontSize: 12, color: '#555', marginTop: 8 }}>
                           <span style={{ fontWeight: 600 }}>Harvest batch:</span>{' '}
@@ -838,6 +919,27 @@ export default function Orders() {
                         {STATUS_ICON[o.status]} {o.status}
                       </span>
                       <span style={s.price}>{parseFloat(o.total_price).toFixed(2)} XLM</span>
+                      {o.dispute_id ? (
+                        <button
+                          type="button"
+                          onClick={() => setDisputeViewId(o.id)}
+                          style={{ fontSize: 12, padding: '5px 12px', borderRadius: 8, border: '1px solid #a04000', background: '#fff', color: '#a04000', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                          ⚖️ View dispute
+                        </button>
+                      ) : (
+                        user?.role === 'buyer' &&
+                        o.status === 'paid' &&
+                        o.escrow_status && o.escrow_status !== 'none' && (
+                          <button
+                            type="button"
+                            onClick={() => setDisputeTarget(o)}
+                            style={{ fontSize: 12, padding: '5px 12px', borderRadius: 8, border: '1px solid #b42318', background: '#fff', color: '#b42318', cursor: 'pointer', fontWeight: 600 }}
+                          >
+                            ⚠️ Open dispute
+                          </button>
+                        )
+                      )}
                       {o.status === 'paid' && (
                         <button
                           style={{
@@ -934,6 +1036,29 @@ export default function Orders() {
       )}
 
       {/* Return request modal */}
+      {disputeTarget && (
+        <OpenDisputeModal
+          order={disputeTarget}
+          onClose={() => setDisputeTarget(null)}
+          onOpened={() => {
+            const id = disputeTarget.id;
+            setDisputeTarget(null);
+            setDisputeViewId(id);
+            load();
+          }}
+        />
+      )}
+      {disputeViewId && (
+        <DisputeDetail orderId={disputeViewId} onClose={() => setDisputeViewId(null)} />
+      )}
+      <Pagination
+        page={page}
+        totalPages={Math.ceil(total / ORDERS_PAGE_SIZE)}
+        total={total}
+        limit={ORDERS_PAGE_SIZE}
+        onChange={setPage}
+      />
+
       {returnModal && (
         <div
           style={{
@@ -947,6 +1072,11 @@ export default function Orders() {
           }}
         >
           <div
+            ref={returnDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="return-modal-title"
+            tabIndex={-1}
             style={{
               background: '#fff',
               borderRadius: 12,
@@ -956,8 +1086,8 @@ export default function Orders() {
               boxShadow: '0 4px 24px #0003',
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>↩️ Request Return</div>
-            <label style={{ fontSize: 13, color: '#555', display: 'block', marginBottom: 6 }}>
+            <h2 id="return-modal-title" style={{ fontWeight: 700, fontSize: 16, margin: '0 0 12px' }}>↩️ Request Return</h2>
+            <label htmlFor="return-reason" style={{ fontSize: 13, color: '#555', display: 'block', marginBottom: 6 }}>
               Reason for return
             </label>
             <textarea
@@ -972,6 +1102,7 @@ export default function Orders() {
                 boxSizing: 'border-box',
                 marginBottom: 16,
               }}
+              id="return-reason"
               value={returnReason}
               onChange={(e) => setReturnReason(e.target.value)}
               placeholder="Describe the issue (damaged, incorrect item, etc.)"

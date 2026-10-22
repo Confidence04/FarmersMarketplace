@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { MAX_RECENTLY_COMPARED } from '../components/RecentlyCompared';
+import { safeStorage } from '../utils/safeStorage';
 
 const CompareContext = createContext(null);
 
@@ -14,15 +15,8 @@ export function CompareProvider({ children }) {
 
   // Load history from localStorage on mount
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(HISTORY_KEY);
-      if (stored) {
-        setHistory(JSON.parse(stored));
-      }
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to load comparison history:', e);
-    }
+    const stored = safeStorage.getJSON(HISTORY_KEY);
+    if (Array.isArray(stored)) setHistory(stored);
   }, []);
 
   useEffect(() => {
@@ -47,13 +41,7 @@ export function CompareProvider({ children }) {
       // Keep only last MAX_RECENTLY_COMPARED comparisons
       const updated = [newEntry, ...prev].slice(0, MAX_RECENTLY_COMPARED);
 
-      // Persist to localStorage
-      try {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error('Failed to save comparison history:', e);
-      }
+      safeStorage.setJSON(HISTORY_KEY, updated);
 
       return updated;
     });
@@ -106,12 +94,7 @@ export function CompareProvider({ children }) {
 
   const clearHistory = useCallback(() => {
     setHistory([]);
-    try {
-      localStorage.removeItem(HISTORY_KEY);
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to clear comparison history:', e);
-    }
+    safeStorage.remove(HISTORY_KEY);
   }, []);
 
   const removeProductsFromHistory = useCallback((productIds) => {
@@ -123,12 +106,7 @@ export function CompareProvider({ children }) {
           productIds: entry.productIds.filter((id) => !unavailableIds.has(id)),
         }))
         .filter((entry) => entry.productIds.length > 0);
-      try {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error('Failed to update comparison history:', e);
-      }
+      safeStorage.setJSON(HISTORY_KEY, updated);
       return updated;
     });
   }, []);

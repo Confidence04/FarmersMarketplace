@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import App from "./App";
+import "./styles/tokens.css";
 import "./browser-compat.css";
 import "./responsive.css";
 import "./accessibility.css";

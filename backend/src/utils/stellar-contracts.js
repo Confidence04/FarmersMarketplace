@@ -289,7 +289,7 @@ async function simulateContractCall(contractId, method, args = []) {
  * @returns {Promise<{ txHash: string, contractId: string }>}
  * @throws if the contract IDs are unconfigured, submission fails, or confirmation times out after 15 s
  */
-async function invokeEscrowContract({ action, senderSecret, orderId, buyerPublicKey, farmerPublicKey, amount, timeoutUnix, userId, cooperativeAddress, cooperativeRoyaltyBps, releaseAfterUnix, buyerBps, requestId }) {
+async function invokeEscrowContract({ action, senderSecret, orderId, buyerPublicKey, farmerPublicKey, amount, timeoutUnix, userId, cooperativeAddress, cooperativeRoyaltyBps, releaseAfterUnix, buyerBps, evidenceHash, requestId }) {
   const contractId = config.sorobanEscrowContractId;
   const xlmTokenContractId = config.sorobanXlmTokenContractId;
   if (!contractId) throw new Error('SOROBAN_ESCROW_CONTRACT_ID is not configured');
@@ -353,6 +353,17 @@ async function invokeEscrowContract({ action, senderSecret, orderId, buyerPublic
       'dispute',
       StellarSdk.nativeToScVal(Number(orderId), { type: 'u64' }),
       StellarSdk.nativeToScVal(keypair.publicKey(), { type: 'address' })
+    );
+  } else if (action === 'submit_evidence') {
+    // submit_evidence(order_id, caller, evidence_hash): the SHA-256 of the uploaded
+    // file. The contract enforces the 48 h window and MAX_EVIDENCE_PER_PARTY.
+    const hashBytes = Buffer.from(String(evidenceHash || ''), 'hex');
+    if (hashBytes.length !== 32) throw new Error('evidenceHash must be a 32-byte hex SHA-256 digest');
+    operation = contract.call(
+      'submit_evidence',
+      StellarSdk.nativeToScVal(Number(orderId), { type: 'u64' }),
+      StellarSdk.nativeToScVal(keypair.publicKey(), { type: 'address' }),
+      StellarSdk.xdr.ScVal.scvBytes(hashBytes)
     );
   } else {
     throw new Error(`Unsupported Soroban escrow action: ${action}`);

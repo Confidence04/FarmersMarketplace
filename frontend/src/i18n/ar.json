@@ -1,4 +1,39 @@
 ﻿{
+  "inbox": {
+    "title": "الرسائل",
+    "conversations": "المحادثات",
+    "thread": "سلسلة الرسائل",
+    "loading": "جارٍ التحميل…",
+    "empty": "لا توجد محادثات بعد.",
+    "unread": "غير مقروءة",
+    "selectConversation": "اختر محادثة لبدء القراءة.",
+    "back": "رجوع",
+    "newConversation": "محادثة جديدة",
+    "sending": "جارٍ الإرسال…",
+    "failed": "فشل الإرسال.",
+    "retry": "إعادة المحاولة",
+    "inputLabel": "اكتب رسالة",
+    "placeholder": "اكتب رسالة…",
+    "send": "إرسال",
+    "loadError": "تعذر تحميل المحادثات.",
+    "messageFarmer": "راسل المزارع"
+  },
+  "notificationCenter": {
+    "title": "الإشعارات",
+    "markAllRead": "تعليم الكل كمقروء",
+    "markRead": "تعليم كمقروء",
+    "viewAll": "عرض الكل",
+    "loading": "جارٍ التحميل…",
+    "empty": "ليست لديك إشعارات.",
+    "loadMore": "تحميل المزيد",
+    "loadError": "تعذر تحميل الإشعارات.",
+    "unreadCount_zero": "لا توجد إشعارات غير مقروءة",
+    "unreadCount_one": "إشعار واحد غير مقروء",
+    "unreadCount_two": "إشعاران غير مقروءين",
+    "unreadCount_few": "{{count}} إشعارات غير مقروءة",
+    "unreadCount_many": "{{count}} إشعارًا غير مقروء",
+    "unreadCount_other": "{{count}} إشعار غير مقروء"
+  },
   "nav": {
     "brand": "🌿 سوق المزارعين",
     "browse": "تصفح",
@@ -66,6 +101,7 @@
       "resend": "إعادة إرسال بريد التأكيد",
       "resent": "إذا كان حسابك يحتاج إلى تأكيد، فقد تم إرسال بريد جديد.",
       "dismiss": "إغلاق"
+    },
     "mfa": {
       "prompt": "أدخل الرمز المكوّن من 6 أرقام من تطبيق المصادقة.",
       "backupPrompt": "أدخل أحد رموز الاسترداد الاحتياطية.",
@@ -76,7 +112,7 @@
       "useAuthenticator": "استخدم رمز تطبيق المصادقة",
       "back": "العودة إلى تسجيل الدخول",
       "invalidCode": "هذا الرمز غير صالح. يرجى المحاولة مرة أخرى.",
-      "locked": "محاولات كثيرة جدًا. حاول مرة أخرى بعد {{seconds}} ثانية."
+      "locked": "محاولات كثيرة جدًا. حاول مرة أخرى بعد {{seconds}} ثانية.",
       "veryWeak": "ضعيفة جداً",
       "weak": "ضعيفة",
       "fair": "متوسطة",
@@ -219,7 +255,7 @@
     "flashSaleTitle": "عرض سريع",
     "flashSaleBanner": "عرض ترويجي سريع",
     "flashSaleSavings": "وفّر {{pct}}%",
-    "ordersLoadError": "تعذّر تحميل طلباتك — يُرجى المحاولة مرة أخرى"
+    "ordersLoadError": "تعذّر تحميل طلباتك — يُرجى المحاولة مرة أخرى",
     "flashSaleSavings": "وفّر {{pct}}%"
   },
   "wallet": {
@@ -284,7 +320,7 @@
     "invalid_destination": "عنوان الوجهة غير صالح.",
     "invalid_code": "رمز التحقق غير صحيح.",
     "totp_required": "أدخل رمز المصادقة الثنائية للمتابعة.",
-    "not_found": "لم نتمكن من العثور على ما تبحث عنه."
+    "not_found": "لم نتمكن من العثور على ما تبحث عنه.",
     "resultCount_zero": "لا نتائج",
     "resultCount_one": "نتيجة واحدة",
     "resultCount_two": "نتيجتان",
@@ -388,14 +424,36 @@
     "pushNotifications": "الإشعارات الفورية",
     "orderUpdates": "تحديثات الطلبات",
     "promotions": "العروض والخصومات",
-    "newsletter": "النشرة الإخبارية"
+    "newsletter": "النشرة الإخبارية",
     "expiresToday": "تنتهي صلاحيته اليوم",
-    "daysLeft": "متبقٍ {{days}} يوم"
+    "daysLeft": "متبقٍ {{days}} يوم",
     "freshness": "الطزاجة",
     "none": "لا شيء",
     "noReviews": "لا توجد مراجعات",
     "expired": "منتهي الصلاحية",
     "expiresToday": "ينتهي اليوم",
     "daysLeft": "{{days}} يوم متبقٍ"
+  },
+  "offline": {
+    "banner": "أنت غير متصل. يمكنك تصفح المنتجات المحفوظة فقط — المدفوعات وإرسال المحفظة والطلبات معطلة.",
+    "willPublish": "سيتم النشر عند عودة الاتصال",
+    "publishedQueued": "تم نشر إعلانك \"{{name}}\".",
+    "publishFailed": "تعذر نشر \"{{name}}\": {{error}}"
+  },
+  "upload": {
+    "progress": "تقدم الرفع",
+    "cancel": "إلغاء",
+    "retry": "إعادة محاولة الرفع",
+    "done": "اكتمل الرفع",
+    "notImage": "يرجى اختيار ملف صورة (JPEG أو PNG أو WebP).",
+    "generateFailed": "فشل إنشاء الصورة.",
+    "tooLarge": "الصورة تتجاوز حد 5 ميغابايت.",
+    "unsupported": "تنسيق غير مدعوم. استخدم JPEG أو PNG أو WebP."
+  },
+  "feedPagination": {
+    "loadMore": "تحميل المزيد",
+    "retry": "إعادة المحاولة",
+    "loadError": "تعذر تحميل المزيد من العناصر.",
+    "empty": "لا يوجد شيء بعد."
   }
 }

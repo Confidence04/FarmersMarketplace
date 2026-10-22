@@ -1,10 +1,15 @@
 const winston = require('winston');
 const path = require('path');
+const { redactLogValue } = require('./utils/logRedaction');
 
 const logLevel = process.env.LOG_LEVEL || 'info';
 const isProduction = process.env.NODE_ENV === 'production';
 
 const logFormat = winston.format.combine(
+  winston.format((info) => {
+    Object.assign(info, redactLogValue({ ...info }));
+    return info;
+  })(),
   winston.format.timestamp(),
   winston.format.errors({ stack: true }),
   isProduction 

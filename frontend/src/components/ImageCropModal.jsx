@@ -1,4 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import { compressCanvas } from '../utils/imageCompression';
 
 const HANDLE = 8;
 const ASPECT_RATIO = 4 / 3;
@@ -20,6 +22,7 @@ const FOCUSABLE_SELECTORS = [
 ].join(',');
 
 export default function ImageCropModal({ src, onConfirm, onCancel, isGalleryImage = false }) {
+  const { t } = useTranslation();
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
   const dialogRef = useRef(null);
@@ -283,12 +286,13 @@ export default function ImageCropModal({ src, onConfirm, onCancel, isGalleryImag
       crop.x * scaleX, crop.y * scaleY, crop.w * scaleX, crop.h * scaleY,
       0, 0, out.width, out.height,
     );
-    out.toBlob(blob => {
-      if (!blob) { setValidationError('Failed to generate image.'); return; }
-      if (blob.size > MAX_SIZE_BYTES) { setValidationError('Image exceeds the 5 MB limit.'); return; }
-      if (!ALLOWED_TYPES.includes(blob.type)) { setValidationError('Unsupported format. Use JPEG, PNG, or WebP.'); return; }
+    // Resize to 1600px long edge and encode WebP/JPEG @ 0.82 before upload (FE-23).
+    compressCanvas(out).then(blob => {
+      if (!blob) { setValidationError(t('upload.generateFailed')); return; }
+      if (blob.size > MAX_SIZE_BYTES) { setValidationError(t('upload.tooLarge')); return; }
+      if (!ALLOWED_TYPES.includes(blob.type)) { setValidationError(t('upload.unsupported')); return; }
       onConfirm(blob);
-    }, 'image/jpeg', 0.92);
+    });
   }
 
   const handleLabel = { body: 'Move crop', tl: 'Top-left handle', tr: 'Top-right handle', bl: 'Bottom-left handle', br: 'Bottom-right handle' };
@@ -301,12 +305,13 @@ export default function ImageCropModal({ src, onConfirm, onCancel, isGalleryImag
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Crop Image"
+        aria-labelledby="crop-modal-title"
+        aria-describedby="crop-modal-help"
         tabIndex={-1}
         style={{ background: '#fff', borderRadius: 14, padding: 24, maxWidth: 540, width: '95%', boxShadow: '0 8px 32px #0004', outline: 'none' }}
       >
-        <div style={{ fontWeight: 700, fontSize: 16, color: '#2d6a4f', marginBottom: 12 }}>Crop Image</div>
-        <div style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>
+        <h2 id="crop-modal-title" style={{ fontWeight: 700, fontSize: 16, color: '#2d6a4f', margin: '0 0 12px' }}>Crop Image</h2>
+        <div id="crop-modal-help" style={{ fontSize: 13, color: '#595959', marginBottom: 8 }}>
           Drag the box to move · drag a corner to resize · Tab cycles handles · arrow keys nudge
         </div>
 

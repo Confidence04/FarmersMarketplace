@@ -50,7 +50,7 @@ export default function AdminAnnouncementsPanel() {
   }
 
   return (
-    <div style={s.card}>
+    <div className="admin-panel" style={s.card}>
       <h3 style={{ marginBottom: 16, color: '#333' }}>📢 Announcements</h3>
       <form onSubmit={handleAnnSubmit} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
         <textarea
@@ -96,7 +96,8 @@ export default function AdminAnnouncementsPanel() {
       {announcements.length === 0 ? (
         <div style={{ color: '#888', fontSize: 14 }}>No announcements yet.</div>
       ) : (
-        <table style={s.table}>
+        <div className="admin-table-scroll">
+          <table style={s.table}>
           <thead>
             <tr>
               <th style={s.th}>Message</th>
@@ -180,7 +181,8 @@ export default function AdminAnnouncementsPanel() {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       )}
       {confirmDialog}
     </div>

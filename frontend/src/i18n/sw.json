@@ -1,4 +1,35 @@
 ﻿{
+  "inbox": {
+    "title": "Ujumbe",
+    "conversations": "Mazungumzo",
+    "thread": "Mfululizo wa ujumbe",
+    "loading": "Inapakia…",
+    "empty": "Bado hakuna mazungumzo.",
+    "unread": "haijasomwa",
+    "selectConversation": "Chagua mazungumzo ili kuanza kusoma.",
+    "back": "Rudi",
+    "newConversation": "Mazungumzo mapya",
+    "sending": "Inatuma…",
+    "failed": "Imeshindwa kutuma.",
+    "retry": "Jaribu tena",
+    "inputLabel": "Andika ujumbe",
+    "placeholder": "Andika ujumbe…",
+    "send": "Tuma",
+    "loadError": "Imeshindwa kupakia mazungumzo.",
+    "messageFarmer": "Mtumie mkulima ujumbe"
+  },
+  "notificationCenter": {
+    "title": "Arifa",
+    "markAllRead": "Weka zote kama zimesomwa",
+    "markRead": "Weka kama imesomwa",
+    "viewAll": "Tazama zote",
+    "loading": "Inapakia…",
+    "empty": "Huna arifa.",
+    "loadMore": "Pakia zaidi",
+    "loadError": "Imeshindwa kupakia arifa.",
+    "unreadCount_one": "Arifa {{count}} haijasomwa",
+    "unreadCount_other": "Arifa {{count}} hazijasomwa"
+  },
   "nav": {
     "brand": "ðŸŒ¿ SokolaFarm",
     "browse": "Vinjari",
@@ -66,6 +97,7 @@
       "resend": "Tuma tena barua pepe ya uthibitisho",
       "resent": "Ikiwa akaunti yako inahitaji uthibitisho, barua pepe mpya imetumwa.",
       "dismiss": "Funga"
+    },
     "mfa": {
       "prompt": "Weka msimbo wenye tarakimu 6 kutoka kwenye programu yako ya uthibitishaji.",
       "backupPrompt": "Weka mojawapo ya misimbo yako ya akiba.",
@@ -300,8 +332,7 @@
     "invalid_code": "Msimbo wa uthibitisho si sahihi.",
     "totp_required": "Weka msimbo wa uthibitishaji wa hatua mbili ili kuendelea.",
     "not_found": "Hatukuweza kupata ulichokuwa ukitafuta."
-  }
-}
+  },
   "notFound": {
     "title": "404 - Ukurasa Haupatikani",
     "body": "Ukurasa unaoutafuta haupo. Huenda umehamishwa au kufutwa.",
@@ -347,5 +378,27 @@
     "orderUpdates": "Sasisho za Agizo",
     "promotions": "Matangazo na Ofa",
     "newsletter": "Jarida"
+  },
+  "offline": {
+    "banner": "Uko nje ya mtandao. Unaona bidhaa zilizohifadhiwa tu — malipo, kutuma pesa na maagizo yamezimwa.",
+    "willPublish": "Itachapishwa ukirudi mtandaoni",
+    "publishedQueued": "Tangazo lako \"{{name}}\" limechapishwa.",
+    "publishFailed": "Imeshindwa kuchapisha \"{{name}}\": {{error}}"
+  },
+  "upload": {
+    "progress": "Maendeleo ya kupakia",
+    "cancel": "Ghairi",
+    "retry": "Jaribu kupakia tena",
+    "done": "Upakiaji umekamilika",
+    "notImage": "Tafadhali chagua faili la picha (JPEG, PNG au WebP).",
+    "generateFailed": "Imeshindwa kutengeneza picha.",
+    "tooLarge": "Picha inazidi kikomo cha MB 5.",
+    "unsupported": "Muundo hautumiki. Tumia JPEG, PNG au WebP."
+  },
+  "feedPagination": {
+    "loadMore": "Pakia zaidi",
+    "retry": "Jaribu tena",
+    "loadError": "Imeshindwa kupakia vipengee zaidi.",
+    "empty": "Hakuna kitu bado."
   }
 }

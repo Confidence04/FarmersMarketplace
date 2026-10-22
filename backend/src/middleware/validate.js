@@ -21,14 +21,12 @@ function validate(schema) {
     if (!result.success) {
       const issues = result.error.issues || [];
       const details = issues.map((e) => ({ field: e.path.join('.'), message: e.message }));
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: details[0]?.message || 'Validation error',
-          code: 'validation_error',
-          details,
-        });
+      return res.status(400).json({
+        success: false,
+        message: details[0]?.message || 'Validation error',
+        code: 'validation_error',
+        details,
+      });
     }
     req.body = result.data;
     next();
@@ -58,64 +56,138 @@ module.exports = {
     })
   ),
 
-  changePassword: validate(z.object({
-    current_password: z.string().min(1, 'current_password is required'),
-    new_password: z.string()
-      .min(8, 'new_password must be at least 8 characters')
-      .regex(/[A-Z]/, 'new_password must contain at least one uppercase letter')
-      .regex(/[0-9]/, 'new_password must contain at least one number')
-      .refine(v => !WEAK_PASSWORDS.has(v), 'new_password is too common, choose a stronger one'),
-  })),
+  changePassword: validate(
+    z.object({
+      current_password: z.string().min(1, 'current_password is required'),
+      new_password: z
+        .string()
+        .min(8, 'new_password must be at least 8 characters')
+        .regex(/[A-Z]/, 'new_password must contain at least one uppercase letter')
+        .regex(/[0-9]/, 'new_password must contain at least one number')
+        .refine((v) => !WEAK_PASSWORDS.has(v), 'new_password is too common, choose a stronger one'),
+    })
+  ),
 
-  product: validate(z.object({
-    name: z.string().min(1, 'name is required').trim(),
-    price: z.coerce.number().positive('price must be a positive number'),
-    quantity: z.coerce.number().int().positive('quantity must be a positive integer'),
-    unit: z.string().trim().optional(),
-    description: z.string().optional(),
-    category: z.string().optional(),
-    low_stock_threshold: z.coerce.number().int().nonnegative().optional(),
-    image_url: z.string().optional().or(z.literal('')),
-    tags: z.array(z.string()).optional(),
-    nutrition: z.object({
-      calories: z.coerce.number().nonnegative('calories must be non-negative').optional(),
-      protein: z.coerce.number().nonnegative('protein must be non-negative').optional(),
-      carbs: z.coerce.number().nonnegative('carbs must be non-negative').optional(),
-      fat: z.coerce.number().nonnegative('fat must be non-negative').optional(),
-      fiber: z.coerce.number().nonnegative('fiber must be non-negative').optional(),
-      vitamins: z.record(z.coerce.number().nonnegative('vitamin values must be non-negative')).optional(),
-    }).optional(),
-    pricing_type: z.enum(['unit', 'weight']).optional(),
-    min_weight: z.coerce.number().positive('min_weight must be positive').optional(),
-    max_weight: z.coerce.number().positive('max_weight must be positive').optional(),
-    min_order_quantity: z.coerce.number().int().positive('min_order_quantity must be a positive integer').optional(),
-    pricing_model: z.enum(['fixed', 'pwyw', 'donation']).default('fixed'),
-    min_price: z.coerce.number().nonnegative('min_price must be non-negative').optional(),
-    weight_kg: z.coerce.number().positive('weight_kg must be a positive number').optional(),
-    is_preorder: z.union([z.boolean(), z.literal(0), z.literal(1), z.enum(['0', '1'])]).optional(),
-    preorder_delivery_date: z.string().nullable().optional(),
-    allergens: z.array(z.string()).optional(),
-    allowed_regions: z.array(z.string()).optional(),
-    available_from: z.string().nullable().optional(),
-    available_until: z.string().nullable().optional(),
-  }).refine(d => {
-    if (d.pricing_type === 'weight') {
-      if (!d.min_weight || !d.max_weight) return false;
-      if (d.min_weight >= d.max_weight) return false;
-    }
-    if (d.pricing_model === 'pwyw' && d.min_price === undefined) return false;
-    return true;
-  }, { message: 'Incomplete pricing configuration: weight-based requires min<max, and PWYW requires min_price' })),
+  product: validate(
+    z
+      .object({
+        name: z.string().min(1, 'name is required').trim(),
+        price: z.coerce.number().positive('price must be a positive number'),
+        quantity: z.coerce.number().int().positive('quantity must be a positive integer'),
+        unit: z.string().trim().optional(),
+        description: z.string().optional(),
+        category: z.string().optional(),
+        low_stock_threshold: z.coerce.number().int().nonnegative().optional(),
+        image_url: z.string().optional().or(z.literal('')),
+        tags: z.array(z.string()).optional(),
+        nutrition: z
+          .object({
+            calories: z.coerce.number().nonnegative('calories must be non-negative').optional(),
+            protein: z.coerce.number().nonnegative('protein must be non-negative').optional(),
+            carbs: z.coerce.number().nonnegative('carbs must be non-negative').optional(),
+            fat: z.coerce.number().nonnegative('fat must be non-negative').optional(),
+            fiber: z.coerce.number().nonnegative('fiber must be non-negative').optional(),
+            vitamins: z
+              .record(z.coerce.number().nonnegative('vitamin values must be non-negative'))
+              .optional(),
+          })
+          .optional(),
+        pricing_type: z.enum(['unit', 'weight']).optional(),
+        min_weight: z.coerce.number().positive('min_weight must be positive').optional(),
+        max_weight: z.coerce.number().positive('max_weight must be positive').optional(),
+        min_order_quantity: z.coerce
+          .number()
+          .int()
+          .positive('min_order_quantity must be a positive integer')
+          .optional(),
+        pricing_model: z.enum(['fixed', 'pwyw', 'donation']).default('fixed'),
+        min_price: z.coerce.number().nonnegative('min_price must be non-negative').optional(),
+        weight_kg: z.coerce.number().positive('weight_kg must be a positive number').optional(),
+        is_preorder: z
+          .union([z.boolean(), z.literal(0), z.literal(1), z.enum(['0', '1'])])
+          .optional(),
+        preorder_delivery_date: z.string().nullable().optional(),
+        allergens: z.array(z.string()).optional(),
+        allowed_regions: z.array(z.string()).optional(),
+        available_from: z.string().nullable().optional(),
+        available_until: z.string().nullable().optional(),
+      })
+      .refine(
+        (d) => {
+          if (d.pricing_type === 'weight') {
+            if (!d.min_weight || !d.max_weight) return false;
+            if (d.min_weight >= d.max_weight) return false;
+          }
+          if (d.pricing_model === 'pwyw' && d.min_price === undefined) return false;
+          return true;
+        },
+        {
+          message:
+            'Incomplete pricing configuration: weight-based requires min<max, and PWYW requires min_price',
+        }
+      )
+  ),
 
-  order: validate(z.object({
-    product_id: z.coerce.number().int().positive('product_id must be a positive integer').optional(),
-    quantity: z.coerce
-      .number()
-      .int()
-      .positive('quantity must be a positive integer')
-      .max(
-        parseInt(process.env.MAX_ORDER_QUANTITY, 10) || 10000,
-        `quantity cannot exceed ${parseInt(process.env.MAX_ORDER_QUANTITY, 10) || 10000}`
+  order: validate(
+    z
+      .object({
+        product_id: z.coerce
+          .number()
+          .int()
+          .positive('product_id must be a positive integer')
+          .optional(),
+        quantity: z.coerce
+          .number()
+          .int()
+          .positive('quantity must be a positive integer')
+          .max(
+            parseInt(process.env.MAX_ORDER_QUANTITY, 10) || 10000,
+            `quantity cannot exceed ${parseInt(process.env.MAX_ORDER_QUANTITY, 10) || 10000}`
+          )
+          .optional(),
+        address_id: z.coerce.number().int().positive().optional(),
+        use_soroban_escrow: z.coerce.boolean().optional(),
+        payment_method: z.enum(['sep7']).optional(),
+        weight: z.coerce.number().positive('weight must be a positive number').optional(),
+        custom_price: z.coerce
+          .number()
+          .positive('custom_price must be a positive number')
+          .optional(),
+        coupon_code: z.string().optional(),
+        source_asset: z
+          .object({
+            code: z.string(),
+            issuer: z.string().optional(),
+          })
+          .optional(),
+        source_asset_code: z.string().optional(),
+        source_asset_issuer: z.string().optional(),
+        max_source_amount: z.coerce
+          .number()
+          .positive('max_source_amount must be a positive number')
+          .optional(),
+        bundle_id: z.coerce
+          .number()
+          .int()
+          .positive('bundle_id must be a positive integer')
+          .optional(),
+      })
+      .refine(
+        (data) => {
+          // Either product_id (single product) or bundle_id (bundle) must be provided
+          if (!data.product_id && !data.bundle_id) {
+            return false;
+          }
+          if (data.product_id && data.bundle_id) {
+            return false;
+          }
+          // If bundle_id is provided, quantity should not be used (bundle has its own quantities)
+          if (data.bundle_id && data.quantity) {
+            return false;
+          }
+          return true;
+        },
+        { message: 'Either product_id (with quantity) or bundle_id must be provided, but not both' }
       )
       .optional(),
     address_id: z.coerce.number().int().positive().optional(),
@@ -132,6 +204,7 @@ module.exports = {
     source_asset_issuer: z.string().optional(),
     max_source_amount: z.coerce.number().positive('max_source_amount must be a positive number').optional(),
     bundle_id: z.coerce.number().int().positive('bundle_id must be a positive integer').optional(),
+    reward_tokens: z.coerce.number().int().nonnegative('reward_tokens must be a non-negative integer').optional(),
   }).refine(data => {
     // Either product_id (single product) or bundle_id (bundle) must be provided
     if (!data.product_id && !data.bundle_id) {
@@ -146,6 +219,7 @@ module.exports = {
     }
     return true;
   }, { message: 'Either product_id (with quantity) or bundle_id must be provided, but not both' })),
+  ),
   updateOrderStatus: validate(
     z.object({
       status: z.enum(['processing', 'shipped', 'delivered']),
@@ -235,7 +309,11 @@ module.exports = {
   dispute: validate(
     z.object({
       order_id: z.coerce.number().int().positive('order_id must be a positive integer'),
-      reason: z.string().min(1, 'reason is required').max(1000, 'reason must be 1000 characters or fewer').trim(),
+      reason: z
+        .string()
+        .min(1, 'reason is required')
+        .max(1000, 'reason must be 1000 characters or fewer')
+        .trim(),
     })
   ),
 
@@ -264,5 +342,113 @@ module.exports = {
       code: z.string().regex(/^\d{6}$/, 'code must be a 6-digit number'),
       backupCodes: z.array(z.string()).min(1, 'at least one backup code is required'),
     })
+  ),
+
+  auction: validate(
+    z
+      .object({
+        product_id: z.coerce.number().int().positive(),
+        start_price: z.coerce.number().positive(),
+        reserve_price: z.coerce.number().positive().optional(),
+        min_increment: z.coerce.number().nonnegative().optional().default(0),
+        ends_at: z.string().datetime({ offset: true }),
+      })
+      .passthrough()
+  ),
+  bid: validate(
+    z
+      .object({ amount: z.coerce.number().positive('amount must be a positive number') })
+      .passthrough()
+  ),
+  bundle: validate(
+    z
+      .object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        price: z.coerce.number().positive(),
+        items: z
+          .array(
+            z
+              .object({
+                product_id: z.coerce.number().int().positive(),
+                quantity: z.coerce.number().int().positive(),
+              })
+              .passthrough()
+          )
+          .min(1),
+      })
+      .passthrough()
+  ),
+  bundlePurchase: validate(
+    z.object({ bundle_id: z.coerce.number().int().positive() }).passthrough()
+  ),
+  flashSale: validate(
+    z
+      .object({
+        flash_sale_price: z.coerce.number().positive().nullable().optional(),
+        flash_sale_starts_at: z.string().datetime({ offset: true }).nullable().optional(),
+        flash_sale_ends_at: z.string().datetime({ offset: true }).nullable().optional(),
+      })
+      .passthrough()
+  ),
+  paymentStream: validate(
+    z
+      .object({
+        contract_id: z.string().min(1),
+        recipient: z.string().min(1),
+        rate_per_second: z.coerce.number().positive(),
+        deposit: z.coerce.number().positive(),
+        end_time: z.coerce.number().int().positive(),
+      })
+      .passthrough()
+  ),
+  paymentStreamRate: validate(z.object({ new_rate: z.coerce.number().positive() }).passthrough()),
+  cooperative: validate(z.object({ name: z.string().trim().min(1).max(120) }).passthrough()),
+  cooperativeMultisig: validate(
+    z
+      .object({
+        member_ids: z.array(z.coerce.number().int().positive()).min(1),
+        threshold: z.coerce.number().int().positive(),
+      })
+      .passthrough()
+  ),
+  cooperativeTransaction: validate(
+    z
+      .object({
+        destination: z.string().min(1),
+        amount: z.coerce
+          .number()
+          .positive()
+          .refine((v) => Number(v.toFixed(7)) === v, 'amount must have at most 7 decimal places'),
+        memo: z.string().max(28).optional(),
+      })
+      .passthrough()
+  ),
+  cooperativeRoyalty: validate(
+    z.object({ royalty_bps: z.coerce.number().int().min(0).max(10000) }).passthrough()
+  ),
+  cooperativeAdmin: validate(
+    z.object({ new_admin_id: z.coerce.number().int().positive() }).passthrough()
+  ),
+  calendar: validate(
+    z
+      .object({
+        product_id: z.coerce.number().int().positive(),
+        available_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        available_until: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        recurrence: z.enum(['none', 'daily', 'weekly', 'monthly']).optional().default('none'),
+        recurrence_end: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .nullable()
+          .optional(),
+      })
+      .passthrough()
+  ),
+  walletBudgetPut: validate(
+    z.object({ limit_xlm: z.coerce.number().nonnegative().nullable() }).passthrough()
   ),
 };

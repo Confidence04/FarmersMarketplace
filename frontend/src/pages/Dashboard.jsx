@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { api } from '../api/client';
+import { clearDraft, queueProduct } from '../utils/draftOutbox';
+import { compressCanvas, isImageFile } from '../utils/imageCompression';
 import { useXlmRate } from '../utils/useXlmRate';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -17,12 +19,13 @@ import CouponManager from '../components/dashboard/CouponManager';
 import CreatorEarningsPanel from '../components/dashboard/CreatorEarningsPanel';
 import OrderManagementPanel from '../components/dashboard/OrderManagementPanel';
 import BundleDiscountPanel from '../components/dashboard/BundleDiscountPanel';
-import PendingMultisigPanel from '../components/dashboard/PendingMultisigPanel';
+import PendingMultisigPanel, { multisigErrorMessage } from '../components/dashboard/PendingMultisigPanel';
+import FarmerAnalyticsPanel from '../components/dashboard/FarmerAnalyticsPanel';
 
 const s = {
   page: { maxWidth: 900, margin: '0 auto', padding: 16 },
   title: { fontSize: 24, fontWeight: 700, color: '#2d6a4f', marginBottom: 24 },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 24 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))', gap: 24 },
   card: { background: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 1px 8px #0001' },
   label: { display: 'block', fontSize: 13, marginBottom: 4, color: '#555' },
   input: {
@@ -542,8 +545,8 @@ export default function Dashboard() {
 
   function validateAndSetImage(file) {
     setImageErr('');
-    if (!ALLOWED_TYPES.includes(file.type)) {
-      setImageErr('Only JPEG, PNG, or WebP images are allowed.');
+    if (!isImageFile(file) || !ALLOWED_TYPES.includes(file.type)) {
+      setImageErr(t('upload.notImage'));
       return false;
     }
     if (file.size > MAX_SIZE_BYTES) {
@@ -654,10 +657,21 @@ export default function Dashboard() {
     setFormErrors({});
     let finalImageUrl = imageUrl;
 
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      // Offline: queue the listing in the IndexedDB outbox; it publishes on reconnect.
+      await queueProduct({ ...form, price: parseFloat(form.price), quantity: parseInt(form.quantity), image_url: imageUrl || undefined });
+      await clearDraft();
+      setMsg({ type: 'ok', text: t('offline.willPublish') });
+      setForm({ ...EMPTY_FORM });
+      return;
+    }
+
     if (imageFile) {
       setUploading(true);
       try {
-        const res = await api.uploadProductImage(imageFile);
+        const bitmap = typeof createImageBitmap === 'function' ? await createImageBitmap(imageFile).catch(() => null) : null;
+        const upload = bitmap ? await compressCanvas(bitmap) : imageFile;
+        const res = await api.uploadProductImage(upload || imageFile);
         finalImageUrl = res.imageUrl;
       } catch (err) {
         setUploading(false);
@@ -699,6 +713,7 @@ export default function Dashboard() {
         batch_id: Number.isFinite(batchId) ? batchId : undefined,
       });
       setMsg({ type: 'ok', text: t('dashboard.productListedOk') });
+      clearDraft();
       setForm({ ...EMPTY_FORM });
       removeImage();
       load();
@@ -878,7 +893,43 @@ export default function Dashboard() {
       else showToast(`Signature added (${res.signaturesCollected}/${res.required} required)`, 'info');
       load();
     } catch (e) {
-      showToast(`Error: ${getErrorMessage(e)}`, 'error');
+      showToast(`Error: ${multisigErrorMessage(e) || getErrorMessage(e)}`, 'error');
+    } finally {
+      setSigningTxId(null);
+    }
+  }
+
+  // FE-30: sign the exact payload (transaction hash, hex) with Freighter.
+  async function handleSignPendingTxWithFreighter(tx) {
+    const freighter = window.freighterApi;
+    if (!freighter?.signMessage || !freighter?.getAddress) {
+      showToast('Freighter is not available in this browser.', 'error');
+      return;
+    }
+    setSigningTxId(tx.id);
+    try {
+      const { address } = await freighter.getAddress();
+      const signed = await freighter.signMessage(tx.payload_hex, { address });
+      const signature = signed?.signedMessage ?? signed;
+      if (!signature || signed?.error) throw new Error(signed?.error?.message || 'Freighter declined to sign');
+      const res = await api.signPendingTx(tx.id, { signature, public_key: address });
+      showToast(`Signature added (${res.signaturesCollected}/${res.required} required)`, 'info');
+      load();
+    } catch (e) {
+      showToast(`Error: ${multisigErrorMessage(e)}`, 'error');
+    } finally {
+      setSigningTxId(null);
+    }
+  }
+
+  async function handleSubmitPendingTx(txId) {
+    setSigningTxId(txId);
+    try {
+      const res = await api.submitPendingTx(txId);
+      showToast(`✅ Release submitted! TX: ${res.txHash}`, 'success');
+      load();
+    } catch (e) {
+      showToast(`Error: ${multisigErrorMessage(e)}`, 'error');
     } finally {
       setSigningTxId(null);
     }
@@ -1037,7 +1088,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div style={s.page}>
+    <div className="farmer-dashboard-page" style={s.page}>
       {deleteConfirm && (
         <div
           role="dialog"
@@ -1124,6 +1175,7 @@ export default function Dashboard() {
       >
         <div style={s.title}>🌾 Farmer Dashboard</div>
         <div
+          className="dashboard-heading"
           style={{
             fontSize: 13,
             color: rate ? '#2d6a4f' : '#999',
@@ -1136,6 +1188,9 @@ export default function Dashboard() {
           {rate ? `1 XLM ≈ $${rate.toFixed(4)} USDC` : 'Rate unavailable'}
         </div>
       </div>
+
+      {/* Analytics (FE-29) */}
+      <FarmerAnalyticsPanel />
 
       {/* Waitlist Analytics */}
       <WaitlistAnalyticsPanel rows={waitlistAnalytics} />
@@ -1150,7 +1205,7 @@ export default function Dashboard() {
       <div style={{ ...s.card, marginBottom: 24 }}>
         <h3 style={{ marginBottom: 12, color: '#333' }}>Flash Sales</h3>
         {flashSaleMsg && <div role={flashSaleMsg.type === 'ok' ? 'status' : 'alert'} style={{ ...s.msg, background: flashSaleMsg.type === 'ok' ? '#d8f3dc' : '#fee', color: flashSaleMsg.type === 'ok' ? '#2d6a4f' : '#c0392b' }}>{flashSaleMsg.text}</div>}
-        <form onSubmit={handleSetFlashSale} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}>
+        <form onSubmit={handleSetFlashSale} className="dashboard-flash-sale-form">
           <div>
             <label style={s.label}>Product</label>
             <select style={s.input} value={flashSaleForm.product_id} onChange={(e) => setFlashSaleForm((f) => ({ ...f, product_id: e.target.value }))} required>
@@ -1879,6 +1934,8 @@ export default function Dashboard() {
         pendingTxs={pendingTxs}
         signingTxId={signingTxId}
         onSign={handleSignPendingTx}
+        onSignWithFreighter={handleSignPendingTxWithFreighter}
+        onSubmit={handleSubmitPendingTx}
       />
 
             {/* QR Code Modal */}

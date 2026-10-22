@@ -13,6 +13,7 @@ const router = require('express').Router();
 const StellarSdk = require('@stellar/stellar-sdk');
 const db = require('../db/schema');
 const auth = require('../middleware/auth');
+const validate = require('../middleware/validate');
 const { err } = require('../middleware/error');
 const { createWallet, server, networkPassphrase } = require('../utils/stellar');
 const { encrypt, decrypt, decryptUserSecretKey } = require('../utils/crypto');
@@ -22,7 +23,7 @@ const MULTISIG_THRESHOLD_XLM = 50; // payments above this require multi-sig
 const TX_EXPIRY_HOURS = 24;
 
 // POST /api/cooperatives — create a cooperative (farmer only)
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, validate.cooperative, async (req, res) => {
   const { name } = req.body;
   if (!name) return err(res, 400, 'name is required', 'validation_error');
 
@@ -83,7 +84,7 @@ router.get('/', async (req, res) => {
 
 // POST /api/cooperatives/:id/multisig-setup — add signers and set threshold
 // Body: { member_ids: [userId, ...], threshold: N }
-router.post('/:id/multisig-setup', auth, async (req, res) => {
+router.post('/:id/multisig-setup', auth, validate.cooperativeMultisig, async (req, res) => {
   const coopId = parseInt(req.params.id, 10);
   const { member_ids, threshold } = req.body;
 
@@ -184,7 +185,7 @@ router.post('/:id/multisig-setup', auth, async (req, res) => {
 
 // POST /api/cooperatives/:id/transactions — initiate a pending multi-sig transaction
 // Body: { destination, amount, memo }
-router.post('/:id/transactions', auth, async (req, res) => {
+router.post('/:id/transactions', auth, validate.cooperativeTransaction, async (req, res) => {
   const coopId = parseInt(req.params.id, 10);
   const { destination, memo } = req.body;
   const amount = parseFloat(req.body.amount);
@@ -247,7 +248,11 @@ router.post('/:id/transactions', auth, async (req, res) => {
       [req.user.id]
     );
     if (initiatorRows[0]?.stellar_secret_key) {
-      tx.sign(StellarSdk.Keypair.fromSecret(await decryptUserSecretKey(initiatorRows[0].stellar_secret_key)));
+      tx.sign(
+        StellarSdk.Keypair.fromSecret(
+          await decryptUserSecretKey(initiatorRows[0].stellar_secret_key)
+        )
+      );
     }
 
     xdr = tx.toXDR();
@@ -312,36 +317,38 @@ router.post('/transactions/:id/sign', auth, async (req, res) => {
     return err(res, 400, 'Already signed', 'already_signed');
   }
 
-  // Add signature to XDR
-  const { rows: userRows } = await db.query(`SELECT stellar_secret_key FROM users WHERE id = $1`, [
-    req.user.id,
-  ]);
-  if (!userRows[0]?.stellar_secret_key) return err(res, 400, 'No Stellar key', 'no_key');
-
+  // Add signature to XDR — either a client-supplied ed25519 signature over the
+  // transaction hash (Freighter) or the member's custodial key.
   let tx;
   try {
     tx = new StellarSdk.Transaction(ptx.xdr, networkPassphrase);
-    tx.sign(StellarSdk.Keypair.fromSecret(await decryptUserSecretKey(userRows[0].stellar_secret_key)));
+    const { signature, public_key: publicKey } = req.body || {};
+    if (signature) {
+      const { rows: pkRows } = await db.query(`SELECT stellar_public_key FROM users WHERE id = $1`, [req.user.id]);
+      if (!publicKey || pkRows[0]?.stellar_public_key !== publicKey) {
+        return err(res, 400, 'Signing key does not match your account', 'sign_error');
+      }
+      const sigBuf = Buffer.from(signature, /^[0-9a-f]+$/i.test(signature) ? 'hex' : 'base64');
+      if (!StellarSdk.Keypair.fromPublicKey(publicKey).verify(tx.hash(), sigBuf)) {
+        return err(res, 400, 'Signature does not match the transaction payload', 'sign_error');
+      }
+      tx.addSignature(publicKey, sigBuf.toString('base64'));
+    } else {
+      const { rows: userRows } = await db.query(`SELECT stellar_secret_key FROM users WHERE id = $1`, [
+        req.user.id,
+      ]);
+      if (!userRows[0]?.stellar_secret_key) return err(res, 400, 'No Stellar key', 'no_key');
+      tx.sign(StellarSdk.Keypair.fromSecret(await decryptUserSecretKey(userRows[0].stellar_secret_key)));
+    }
+    tx.sign(
+      StellarSdk.Keypair.fromSecret(await decryptUserSecretKey(userRows[0].stellar_secret_key))
+    );
   } catch (e) {
     return err(res, 400, `Could not sign: ${e.message}`, 'sign_error');
   }
 
   signatures.push(req.user.id);
   const newXdr = tx.toXDR();
-
-  // Check if threshold reached
-  if (signatures.length >= ptx.multisig_threshold) {
-    try {
-      const result = await server.submitTransaction(tx);
-      await db.query(
-        `UPDATE pending_transactions SET status = 'submitted', signatures = $1, xdr = $2 WHERE id = $3`,
-        [JSON.stringify(signatures), newXdr, txId]
-      );
-      return res.json({ success: true, submitted: true, txHash: result.hash });
-    } catch (e) {
-      return err(res, 502, `Submission failed: ${e.message}`, 'submit_failed');
-    }
-  }
 
   await db.query(`UPDATE pending_transactions SET signatures = $1, xdr = $2 WHERE id = $3`, [
     JSON.stringify(signatures),
@@ -354,7 +361,45 @@ router.post('/transactions/:id/sign', auth, async (req, res) => {
     submitted: false,
     signaturesCollected: signatures.length,
     required: ptx.multisig_threshold,
+    thresholdMet: signatures.length >= ptx.multisig_threshold,
   });
+});
+
+// POST /api/cooperatives/transactions/:id/submit — any member submits once the
+// signature threshold is met (FE-30).
+router.post('/transactions/:id/submit', auth, async (req, res) => {
+  const txId = parseInt(req.params.id, 10);
+  const { rows } = await db.query(
+    `SELECT pt.*, c.multisig_threshold
+     FROM pending_transactions pt
+     JOIN cooperatives c ON c.id = pt.cooperative_id
+     WHERE pt.id = $1`,
+    [txId]
+  );
+  if (!rows.length) return err(res, 404, 'Pending transaction not found', 'not_found');
+  const ptx = rows[0];
+  if (ptx.status !== 'pending') return err(res, 400, `Transaction is ${ptx.status}`, 'invalid_state');
+
+  const { rows: memCheck } = await db.query(
+    `SELECT 1 FROM cooperative_members WHERE cooperative_id = $1 AND user_id = $2`,
+    [ptx.cooperative_id, req.user.id]
+  );
+  if (!memCheck.length) return err(res, 403, 'Not a member', 'forbidden');
+
+  if (!ptx.multisig_threshold) return err(res, 400, 'CoopNotConfigured', 'CoopNotConfigured');
+  const signatures = JSON.parse(ptx.signatures || '[]');
+  if (signatures.length < ptx.multisig_threshold) {
+    return err(res, 400, 'NotEnoughSignatures', 'NotEnoughSignatures');
+  }
+
+  try {
+    const tx = new StellarSdk.Transaction(ptx.xdr, networkPassphrase);
+    const result = await server.submitTransaction(tx);
+    await db.query(`UPDATE pending_transactions SET status = 'submitted' WHERE id = $1`, [txId]);
+    res.json({ success: true, submitted: true, txHash: result.hash });
+  } catch (e) {
+    err(res, 502, `Submission failed: ${e.message}`, 'submit_failed');
+  }
 });
 
 // POST /api/cooperatives/:id/join — farmer joins a cooperative
@@ -403,7 +448,7 @@ router.post('/:id/leave', auth, async (req, res) => {
 
 // PATCH /api/cooperatives/:id/royalty — set cooperative royalty rate (admin-only)
 // Body: { royalty_bps: N }  where N is 0–2000 (max 20%)
-router.patch('/:id/royalty', auth, async (req, res) => {
+router.patch('/:id/royalty', auth, validate.cooperativeRoyalty, async (req, res) => {
   const coopId = parseInt(req.params.id, 10);
   const { royalty_bps } = req.body;
 
@@ -433,7 +478,7 @@ router.patch('/:id/royalty', auth, async (req, res) => {
 });
 
 // PATCH /api/cooperatives/:id/admin — transfer admin role
-router.patch('/:id/admin', auth, async (req, res) => {
+router.patch('/:id/admin', auth, validate.cooperativeAdmin, async (req, res) => {
   const coopId = parseInt(req.params.id, 10);
   const { new_admin_id } = req.body;
   if (!new_admin_id) return err(res, 400, 'new_admin_id is required', 'validation_error');
@@ -520,11 +565,43 @@ router.get('/:id/pending', auth, async (req, res) => {
     [coopId]
   );
 
-  const data = rows.map((r) => ({
-    ...r,
-    signatures: JSON.parse(r.signatures || '[]'),
-    alreadySigned: JSON.parse(r.signatures || '[]').includes(req.user.id),
-  }));
+  const { rows: coopRows } = await db.query(
+    `SELECT multisig_threshold FROM cooperatives WHERE id = $1`,
+    [coopId]
+  );
+  const { rows: members } = await db.query(
+    `SELECT u.id, u.name, u.stellar_public_key
+     FROM cooperative_members cm JOIN users u ON u.id = cm.user_id
+     WHERE cm.cooperative_id = $1`,
+    [coopId]
+  );
+  const threshold = Number(coopRows[0]?.multisig_threshold) || null;
+
+  const { rows: xdrRows } = await db.query(
+    `SELECT id, xdr FROM pending_transactions WHERE cooperative_id = $1 AND status = 'pending'`,
+    [coopId]
+  );
+  const payloadById = new Map();
+  for (const x of xdrRows) {
+    try {
+      // The exact payload each signer signs: the transaction hash for this network.
+      payloadById.set(x.id, new StellarSdk.Transaction(x.xdr, networkPassphrase).hash().toString('hex'));
+    } catch {
+      payloadById.set(x.id, null);
+    }
+  }
+
+  const data = rows.map((r) => {
+    const signatures = JSON.parse(r.signatures || '[]');
+    return {
+      ...r,
+      signatures,
+      alreadySigned: signatures.includes(req.user.id),
+      threshold,
+      members: members.map((m) => ({ ...m, signed: signatures.includes(m.id) })),
+      payload_hex: payloadById.get(r.id) || null,
+    };
+  });
 
   res.json({ success: true, data });
 });

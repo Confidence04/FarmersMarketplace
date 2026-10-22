@@ -6,7 +6,7 @@
  * on any violation with `serious` or `critical` impact, so the E2E CI job
  * fails when one is introduced.
  *
- * Routes covered: marketplace, product detail, login, dashboard, wallet.
+ * Routes covered: marketplace, product detail, login, dashboard, orders, settings, wallet.
  */
 
 import { test, expect, Page } from '@playwright/test';
@@ -100,6 +100,18 @@ test.describe('Accessibility (axe)', () => {
   test('dashboard page', async ({ page }) => {
     await login(page);
     await expectNoSeriousViolations(page, '/dashboard');
+  });
+
+  test('orders page', async ({ page }) => {
+    await login(page);
+    await page.goto('/orders');
+    await expectNoSeriousViolations(page, '/orders');
+  });
+
+  test('settings page', async ({ page }) => {
+    await login(page);
+    await page.goto('/settings');
+    await expectNoSeriousViolations(page, '/settings');
   });
 
   test('wallet page', async ({ page }) => {

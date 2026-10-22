@@ -347,48 +347,16 @@ async function createPreorderClaimableBalance({
   return { txHash: result.hash, balanceId: balance.id };
 }
 
+// Get the shared Soroban RPC server instance.
+function getSorobanServer() {
+  const sorobanRpcUrl = process.env.SOROBAN_RPC_URL ||
 // Get the shared Soroban RPC server instance
 async function getSorobanServer() {
   const sorobanRpcUrl =
     process.env.SOROBAN_RPC_URL ||
     (isTestnet ? 'https://soroban-testnet.stellar.org' : 'https://soroban.stellar.org');
-  const sorobanServer = new StellarSdk.SorobanRpc.Server(sorobanRpcUrl);
-
-  // Build a ledger key for the contract's data entries
-  const contractAddress = new StellarSdk.Address(contractId);
-  const ledgerKey = StellarSdk.xdr.LedgerKey.contractData(
-    new StellarSdk.xdr.LedgerKeyContractData({
-      contract: contractAddress.toScAddress(),
-      key: StellarSdk.xdr.ScVal.scvLedgerKeyContractInstance(),
-      durability: StellarSdk.xdr.ContractDataDurability.persistent(),
-    })
-  );
-
-  let response;
-  try {
-    response = await sorobanServer.getLedgerEntries(ledgerKey);
-  } catch (e) {
-    if (e.message?.includes('not found') || e.code === 404) {
-      const notFound = new Error('Contract not found');
-      notFound.code = 404;
-      throw notFound;
-    }
-    throw e;
-  }
-
-  const entries = (response.entries || [])
-    .map((entry) => {
-      const data = entry.val?.contractData?.();
-      const key = data ? StellarSdk.scValToNative(data.key()) : String(entry.key);
-      const val = data ? StellarSdk.scValToNative(data.val()) : null;
-      const durability = data?.durability()?.name || 'Persistent';
-      return { key: String(key), val, durability };
-    })
-    .filter((e) => !prefix || String(e.key).startsWith(prefix));
-
-  return entries;
+  return new StellarSdk.SorobanRpc.Server(sorobanRpcUrl);
 }
-
 /**
  * Current WASM bytecode hash for a Soroban contract (ledger contract instance entry).
  * @param {string} contractId Contract address (C… or 64-char hex)
@@ -1408,3 +1376,22 @@ module.exports = {
   ...payments,
   ...contracts,
 };
+
+const SUBENTRY_RESERVE_XLM = parseFloat(process.env.STELLAR_SUBENTRY_RESERVE_XLM || '0.5');
+const BASE_ACCOUNT_RESERVE_ENTRIES = 2;
+const PAYMENT_FEE_XLM = parseFloat(process.env.STELLAR_PAYMENT_FEE_XLM || '0.00001');
+function calculateSpendableBalance(balance, subentries = 0, fee = PAYMENT_FEE_XLM) {
+  const reserve = (BASE_ACCOUNT_RESERVE_ENTRIES + Number(subentries || 0)) * SUBENTRY_RESERVE_XLM;
+  return Math.max(0, Number(balance || 0) - reserve - Number(fee || 0));
+}
+async function getSpendableBalance(publicKey, fee = PAYMENT_FEE_XLM) {
+  try {
+    const account = await server.loadAccount(publicKey);
+    const native = account.balances.find((b) => b.asset_type === 'native');
+    return calculateSpendableBalance(native ? native.balance : 0, account.subentry_count, fee);
+  } catch {
+    return 0;
+  }
+}
+module.exports.calculateSpendableBalance = calculateSpendableBalance;
+module.exports.getSpendableBalance = getSpendableBalance;

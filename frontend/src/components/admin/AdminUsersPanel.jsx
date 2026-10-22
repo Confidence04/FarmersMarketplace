@@ -63,7 +63,7 @@ export default function AdminUsersPanel({
   };
 
   return (
-    <div style={s.card}>
+    <div className="admin-panel" style={s.card}>
       <h3 style={{ marginBottom: 16, color: '#333' }}>Users ({pagination.total})</h3>
 
       {/* Filters */}
@@ -116,7 +116,8 @@ export default function AdminUsersPanel({
       </div>
 
       {/* Table */}
-      <table style={s.table}>
+      <div className="admin-table-scroll">
+        <table style={s.table}>
         <thead>
           <tr>
             <th style={s.th}>ID</th>
@@ -166,7 +167,8 @@ export default function AdminUsersPanel({
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
 
       {/* Pagination */}
       <div style={s.pagination}>

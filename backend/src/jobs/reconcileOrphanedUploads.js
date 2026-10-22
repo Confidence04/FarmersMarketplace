@@ -20,6 +20,7 @@ const path = require('path');
 const cron = require('node-cron');
 const db = require('../db/schema');
 const logger = require('../logger');
+const objectStorage = require('../services/objectStorage');
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm']);
@@ -45,6 +46,16 @@ function extractBasename(url) {
  * Collect all files (non-recursively) in a directory with the given extensions.
  * Returns an array of { basename, fullPath, mtime }.
  */
+function extractObjectKey(url) {
+  if (!url) return null;
+  try {
+    const pathName = new URL(url, 'http://localhost').pathname.replace(/^\//, '');
+    return pathName.startsWith('uploads/') ? pathName : null;
+  } catch {
+    return null;
+  }
+}
+
 function collectFiles(dir, extensions) {
   if (!fs.existsSync(dir)) return [];
   return fs
@@ -102,11 +113,47 @@ async function getReferencedBasenames() {
  * @param {number}  [options.gracePeriodSeconds]  Files newer than this age are kept.
  * @returns {Promise<{orphaned: string[], kept: string[], deleted: number}>}
  */
+async function reconcileObjectStorageUploads({ dryRun, gracePeriodSeconds }) {
+  const [productImages, galleryImages, videos] = await Promise.all([
+    db.query('SELECT image_url FROM products WHERE image_url IS NOT NULL', []),
+    db.query('SELECT url FROM product_images WHERE url IS NOT NULL', []),
+    db.query('SELECT video_url FROM product_videos WHERE video_url IS NOT NULL', []),
+  ]);
+  const referenced = new Set();
+  for (const row of [...productImages.rows, ...galleryImages.rows, ...videos.rows]) {
+    const key = extractObjectKey(row.image_url || row.url || row.video_url);
+    if (key) referenced.add(key);
+  }
+  const objects = await objectStorage.listObjects();
+  const orphaned = [],
+    kept = [];
+  let deleted = 0;
+  for (const object of objects) {
+    const key = object.key;
+    const recent =
+      Date.now() - new Date(object.lastModified || Date.now()).getTime() <
+      gracePeriodSeconds * 1000;
+    if (referenced.has(key) || recent) {
+      kept.push(key);
+      continue;
+    }
+    orphaned.push(key);
+    if (!dryRun) {
+      await objectStorage.deleteObject(key);
+      deleted += 1;
+    }
+  }
+  return { orphaned, kept, deleted };
+}
+
 async function reconcileOrphanedUploads({
   dryRun = true,
   uploadsDir = DEFAULT_UPLOADS_DIR,
   gracePeriodSeconds = DEFAULT_GRACE_SECONDS,
 } = {}) {
+  if (objectStorage.configured)
+    return reconcileObjectStorageUploads({ dryRun, gracePeriodSeconds });
+
   const now = Date.now();
   const graceMs = gracePeriodSeconds * 1000;
 
@@ -128,7 +175,9 @@ async function reconcileOrphanedUploads({
   try {
     referenced = await getReferencedBasenames();
   } catch (err) {
-    logger.error('[orphan-uploads] Failed to query DB for referenced uploads', { error: err.message });
+    logger.error('[orphan-uploads] Failed to query DB for referenced uploads', {
+      error: err.message,
+    });
     throw err;
   }
 

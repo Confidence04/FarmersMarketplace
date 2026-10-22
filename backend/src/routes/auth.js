@@ -14,6 +14,7 @@ const {
 } = require('../utils/stellar');
 const validate = require('../middleware/validate');
 const auth = require('../middleware/auth');
+const requireStepUp2FA = require('../middleware/requireStepUp2FA');
 const { err } = require('../middleware/error');
 const logger = require('../logger');
 const { createPerIpRateLimiter } = require('../middleware/rateLimitPerUser');
@@ -89,7 +90,7 @@ const COOKIE_OPTIONS = {
   secure: process.env.NODE_ENV === 'production',
   sameSite: 'strict',
   maxAge: REFRESH_TOKEN_TTL,
-  path: '/api/auth',
+  path: '/api/v1/auth',
 };
 
 function signAccessToken(payload) {
@@ -120,7 +121,7 @@ async function storeRefreshToken(userId, rawToken, familyId = null) {
   const family = familyId || hash; // new family starts with its own hash as ID
   const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL).toISOString();
   await db.query(
-    'INSERT INTO refresh_tokens (user_id, token_hash, expires_at, family_id, used) VALUES ($1, $2, $3, $4, 0)',
+    'INSERT INTO refresh_tokens (user_id, token_hash, expires_at, family_id, used, revoked_at, replaced_by) VALUES ($1, $2, $3, $4, 0, NULL, NULL)',
     [userId, hash, expiresAt, family]
   );
   return family;
@@ -129,34 +130,29 @@ async function storeRefreshToken(userId, rawToken, familyId = null) {
 // Returns { newToken, familyId } on success, { reuse: true, userId, familyId } on replay, null on expired/not-found.
 async function rotateRefreshToken(userId, oldRawToken) {
   const oldHash = hashToken(oldRawToken);
-  const { rows } = await db.query(
-    'SELECT * FROM refresh_tokens WHERE token_hash = $1 AND user_id = $2',
-    [oldHash, userId]
-  );
+  const { rows } = await db.query('SELECT * FROM refresh_tokens WHERE token_hash = $1 AND user_id = $2', [oldHash, userId]);
   const existing = rows[0];
   if (!existing) return null;
-
-  // Replay detected: token exists but was already used — nuke the entire family
-  if (existing.used) {
-    await db.query('DELETE FROM refresh_tokens WHERE user_id = $1 AND family_id = $2', [
-      userId,
-      existing.family_id,
-    ]);
+  if (existing.revoked_at || existing.replaced_by || existing.used) {
+    await db.query('UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP) WHERE user_id = $1 AND family_id = $2', [userId, existing.family_id]);
     return { reuse: true, userId, familyId: existing.family_id };
   }
-
   if (new Date(existing.expires_at) < new Date()) {
-    await db.query('DELETE FROM refresh_tokens WHERE id = $1', [existing.id]);
+    await db.query('UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE id = $1', [existing.id]);
     return null;
   }
-
-  // Mark old token as used (soft-delete keeps it for reuse detection)
-  await db.query('UPDATE refresh_tokens SET used = 1 WHERE id = $1', [existing.id]);
   const newRawToken = generateRefreshToken();
-  await storeRefreshToken(userId, newRawToken, existing.family_id);
+  const newHash = hashToken(newRawToken);
+  const newExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL).toISOString();
+  const update = await db.query(`UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP, used = 1 WHERE id = $1 AND revoked_at IS NULL AND replaced_by IS NULL AND COALESCE(used, 0) = 0`, [existing.id]);
+  if (update.rowCount === 0) {
+    await db.query('UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP) WHERE user_id = $1 AND family_id = $2', [userId, existing.family_id]);
+    return { reuse: true, userId, familyId: existing.family_id };
+  }
+  const inserted = await db.query(`INSERT INTO refresh_tokens (user_id, token_hash, expires_at, family_id, used, revoked_at, replaced_by) VALUES ($1, $2, $3, $4, 0, NULL, NULL) RETURNING id`, [userId, newHash, newExpiresAt, existing.family_id]);
+  await db.query('UPDATE refresh_tokens SET replaced_by = $1 WHERE id = $2', [inserted.rows?.[0]?.id || null, existing.id]);
   return { newToken: newRawToken, familyId: existing.family_id };
 }
-
 /**
  * @swagger
  * tags:
@@ -301,6 +297,11 @@ router.post('/login', loginRateLimit, validate.login, async (req, res) => {
   const valid = await bcrypt.compare(password, user.password);
   if (!valid) return err(res, 401, 'Invalid credentials', 'invalid_credentials');
 
+  const { rows: twoFactorRows } = await db.query('SELECT enabled FROM user_2fa_settings WHERE user_id = $1', [user.id]);
+  if (twoFactorRows[0]?.enabled === 1 || twoFactorRows[0]?.enabled === true) {
+    const mfaToken = jwt.sign({ id: user.id, scope: 'mfa' }, getJwtSecret(), { expiresIn: '5m' });
+    return res.json({ mfa_required: true, mfa_token: mfaToken });
+  }
   const accessToken = signAccessToken({ id: user.id, role: user.role });
   const rawRefresh = generateRefreshToken();
   await storeRefreshToken(user.id, rawRefresh);
@@ -365,7 +366,7 @@ router.post('/refresh', async (req, res) => {
 
   if (new Date(stored.expires_at) < new Date()) {
     await db.query('DELETE FROM refresh_tokens WHERE id = $1', [stored.id]);
-    res.clearCookie('refreshToken', { path: '/api/auth' });
+    res.clearCookie('refreshToken', { path: '/api/v1/auth' });
     return res.status(401).json({ error: 'Refresh token expired' });
   }
 
@@ -378,7 +379,7 @@ router.post('/refresh', async (req, res) => {
       userId: result.userId,
       familyId: result.familyId,
     });
-    res.clearCookie('refreshToken', { path: '/api/auth' });
+    res.clearCookie('refreshToken', { path: '/api/v1/auth' });
     return res.status(401).json({ error: 'Token reuse detected', code: 'token_reuse_detected' });
   }
 
@@ -437,7 +438,7 @@ router.get('/stream-token', auth, (req, res) => {
 });
 
 // PATCH /api/auth/me — update general account fields (name/email)
-router.patch('/me', auth, async (req, res) => {
+router.patch('/me', auth, requireStepUp2FA, async (req, res) => {
   const { name, email } = req.body || {};
   if (!name && !email) return err(res, 400, 'Nothing to update', 'validation_error');
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -476,7 +477,7 @@ router.patch('/me', auth, async (req, res) => {
  *                 ok: { type: boolean }
  */
 // POST /api/auth/logout
-router.patch('/password', auth, validate.changePassword, async (req, res) => {
+router.patch('/password', auth, requireStepUp2FA, validate.changePassword, async (req, res) => {
   const { current_password: currentPassword, new_password: newPassword } = req.body;
 
   const { rows } = await db.query('SELECT id, password FROM users WHERE id = $1', [req.user.id]);
@@ -490,7 +491,7 @@ router.patch('/password', auth, validate.changePassword, async (req, res) => {
   await db.query('UPDATE users SET password = $1 WHERE id = $2', [hashed, req.user.id]);
   await db.query('DELETE FROM refresh_tokens WHERE user_id = $1', [req.user.id]);
 
-  res.clearCookie('refreshToken', { path: '/api/auth' });
+  res.clearCookie('refreshToken', { path: '/api/v1/auth' });
   res.json({ ok: true });
 });
 
@@ -500,7 +501,7 @@ router.post('/logout', async (req, res) => {
     const hash = hashToken(rawToken);
     await db.query('DELETE FROM refresh_tokens WHERE token_hash = $1', [hash]);
   }
-  res.clearCookie('refreshToken', { path: '/api/auth' });
+  res.clearCookie('refreshToken', { path: '/api/v1/auth' });
   res.json({ ok: true });
 });
 
@@ -516,10 +517,72 @@ router.post('/deactivate', auth, async (req, res) => {
 
   // Revoke all sessions
   await db.query('DELETE FROM refresh_tokens WHERE user_id = $1', [req.user.id]);
-  res.clearCookie('refreshToken', { path: '/api/auth' });
+  res.clearCookie('refreshToken', { path: '/api/v1/auth' });
   res.json({
     success: true,
     message: 'Account deactivated. Your data will be anonymized after 30 days.',
+  });
+});
+
+async function exportAccountData(userId) {
+  const [profile, addresses, orders, reviews, favorites] = await Promise.all([
+    db.query(
+      `SELECT id, name, email, role, stellar_public_key, active, created_at, deactivated_at, anonymized_at
+       FROM users WHERE id = $1`,
+      [userId]
+    ),
+    db.query('SELECT * FROM addresses WHERE user_id = $1 ORDER BY id', [userId]),
+    db.query(
+      `SELECT o.id, o.product_id, o.quantity, o.total_price, o.status, o.stellar_tx_hash, o.created_at,
+              p.name AS product_name
+       FROM orders o LEFT JOIN products p ON p.id = o.product_id
+       WHERE o.buyer_id = $1 ORDER BY o.created_at DESC`,
+      [userId]
+    ),
+    db.query(
+      `SELECT id, order_id, product_id, rating, comment, created_at
+       FROM reviews WHERE buyer_id = $1 ORDER BY created_at DESC`,
+      [userId]
+    ),
+    db.query('SELECT * FROM favorites WHERE buyer_id = $1 ORDER BY id', [userId]),
+  ]);
+  if (!profile.rows[0]) return null;
+  return {
+    exportedAt: new Date().toISOString(),
+    profile: profile.rows[0],
+    addresses: addresses.rows,
+    orders: orders.rows,
+    reviews: reviews.rows,
+    favorites: favorites.rows,
+  };
+}
+
+// GET /api/auth/export and /api/auth/account/export — self-service GDPR export
+const accountExportHandler = async (req, res) => {
+  const data = await exportAccountData(req.user.id);
+  if (!data) return err(res, 404, 'User not found', 'not_found');
+  res.setHeader('Content-Disposition', `attachment; filename="farmers-marketplace-data-${req.user.id}.json"`);
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json(data);
+};
+router.get('/export', auth, accountExportHandler);
+router.get('/account/export', auth, accountExportHandler);
+
+// POST /api/auth/account/deletion-request — revoke sessions and schedule anonymization
+router.post('/account/deletion-request', auth, async (req, res) => {
+  const { rows } = await db.query('SELECT id FROM users WHERE id = $1', [req.user.id]);
+  if (!rows[0]) return err(res, 404, 'User not found', 'not_found');
+
+  await db.query(
+    'UPDATE users SET active = 0, deactivated_at = CURRENT_TIMESTAMP WHERE id = $1',
+    [req.user.id]
+  );
+  await db.query('DELETE FROM refresh_tokens WHERE user_id = $1', [req.user.id]);
+  res.clearCookie('refreshToken', { path: '/api/auth' });
+  return res.status(202).json({
+    success: true,
+    message: 'Deletion requested. Personal data will be anonymized after the retention period.',
   });
 });
 
@@ -552,7 +615,7 @@ router.delete('/account', auth, async (req, res) => {
   await invalidateAuthStatus(req.user.id);
 
   // Clear the refresh token cookie
-  res.clearCookie('refreshToken', { path: '/api/auth' });
+  res.clearCookie('refreshToken', { path: '/api/v1/auth' });
   res.json({ success: true, message: 'Account deleted' });
 });
 
@@ -560,7 +623,7 @@ router.delete('/account', auth, async (req, res) => {
  * POST /api/auth/seed-phrase  (password confirmation required)
  * Returns the decrypted mnemonic ONCE per request. Never cached.
  */
-router.post('/seed-phrase', auth, validate.confirmPassword, async (req, res) => {
+router.post('/seed-phrase', auth, requireStepUp2FA, validate.confirmPassword, async (req, res) => {
   const { password } = req.body;
   const { rows } = await db.query('SELECT password, stellar_mnemonic FROM users WHERE id = $1', [
     req.user.id,
@@ -664,6 +727,48 @@ router.post('/recover', validate.recover, async (req, res) => {
   });
 });
 
+/** Complete password login with a TOTP or one-time recovery code. */
+router.post('/2fa/login', async (req, res) => {
+  try {
+    const payload = jwt.verify(req.body?.mfa_token || '', getJwtSecret());
+    if (payload.scope !== 'mfa') return err(res, 401, 'Invalid MFA token', 'invalid_mfa_token');
+    const code = String(req.body?.code || '').trim();
+    const { rows } = await db.query('SELECT * FROM user_2fa_settings WHERE user_id = $1 AND enabled = 1', [payload.id]);
+    const settings = rows[0];
+    if (!settings) return err(res, 401, '2FA is not enabled', 'invalid_mfa');
+    let verified = false;
+    const secret = settings.totp_secret || settings.secret;
+    if (/^\d{6}$/.test(code)) {
+      verified = speakeasy.totp.verify({ secret, encoding: 'base32', token: code, window: 2 });
+    } else if (code) {
+      const hash = crypto.createHash('sha256').update(code).digest('hex');
+      const consumed = await db.query('UPDATE two_factor_recovery_codes SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL', [payload.id, hash]);
+      if (consumed.rowCount > 0) verified = true;
+      else {
+        const codes = JSON.parse(settings.backup_codes || '[]');
+        const position = codes.indexOf(hash);
+        if (position >= 0) {
+          codes.splice(position, 1);
+          await db.query('UPDATE user_2fa_settings SET backup_codes = $1 WHERE user_id = $2', [JSON.stringify(codes), payload.id]);
+          verified = true;
+        }
+      }
+    }
+    if (!verified) return err(res, 401, 'Invalid or already-used 2FA code', 'invalid_mfa_code');
+    const { rows: users } = await db.query('SELECT id, name, email, role, stellar_public_key FROM users WHERE id = $1', [payload.id]);
+    const user = users[0];
+    if (!user) return err(res, 401, 'User not found', 'user_not_found');
+    const accessToken = signAccessToken({ id: user.id, role: user.role });
+    const rawRefresh = generateRefreshToken();
+    await storeRefreshToken(user.id, rawRefresh);
+    res.cookie('refreshToken', rawRefresh, COOKIE_OPTIONS);
+    return res.json({ token: accessToken, user: { id: user.id, name: user.name, email: user.email, role: user.role, publicKey: user.stellar_public_key } });
+  } catch (e) {
+    if (e.name === 'TokenExpiredError' || e.name === 'JsonWebTokenError') return err(res, 401, 'Invalid MFA token', 'invalid_mfa_token');
+    logger.error('2fa_login_error', { error: e.message });
+    return res.status(500).json({ error: 'Failed to complete 2FA login' });
+  }
+});
 /**
  * POST /api/auth/2fa/setup
  * Initiate 2FA setup: generate TOTP secret and return QR code
@@ -724,6 +829,10 @@ router.post('/2fa/verify', auth, validate.verify2FA, async (req, res) => {
        totp_secret = $2, backup_codes = $3, enabled = 1, updated_at = ${nowExpression}`,
       [req.user.id, secret, JSON.stringify(hashedBackupCodes)]
     );
+    await db.query('DELETE FROM two_factor_recovery_codes WHERE user_id = $1', [req.user.id]);
+    for (const codeHash of hashedBackupCodes) {
+      await db.query('INSERT INTO two_factor_recovery_codes (user_id, code_hash) VALUES ($1, $2)', [req.user.id, codeHash]);
+    }
 
     res.json({ success: true, message: '2FA enabled successfully' });
   } catch (e) {

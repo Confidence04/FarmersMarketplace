@@ -76,6 +76,72 @@
   .product-actions { flex-wrap: wrap; gap: 6px !important; }
 }
 
+.dashboard-flash-sale-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+@media (max-width: 400px) {
+  .farmer-dashboard-page,
+  .product-detail-page,
+  .wallet-page,
+  .admin-dashboard {
+    padding-inline: 12px !important;
+  }
+
+  .dashboard-heading {
+    align-items: flex-start !important;
+    flex-direction: column !important;
+    gap: 8px;
+  }
+
+  .dashboard-flash-sale-form,
+  .admin-comparison-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .product-detail-card {
+    padding: 16px !important;
+  }
+
+  .detail-purchase-row {
+    flex-wrap: wrap;
+  }
+
+  .detail-purchase-row input {
+    box-sizing: border-box;
+    min-width: 0;
+  }
+
+  .admin-panel {
+    min-width: 0;
+  }
+
+  .admin-table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .admin-table-scroll table {
+    min-width: 640px;
+  }
+
+  .wallet-toast-container {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 12px !important;
+    align-items: stretch;
+  }
+
+  .wallet-toast {
+    width: 100%;
+    max-width: none;
+  }
+}
+
 /* ── Print layout (Compare page) ── */
 @media print {
   nav, .compare-actions, .btn-touch {

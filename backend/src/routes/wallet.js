@@ -2,6 +2,7 @@ const router = require('express').Router();
 const StellarSdk = require('@stellar/stellar-sdk');
 const db = require('../db/schema');
 const auth = require('../middleware/auth');
+const requireStepUp2FA = require('../middleware/requireStepUp2FA');
 const validate = require('../middleware/validate');
 const cache = require('../cache');
 const createPerUserRateLimiter = require('../middleware/rateLimitPerUser');
@@ -218,7 +219,7 @@ router.post('/fund', auth, fundLimiter, async (req, res) => {
  *     summary: Send XLM to another address
  *     tags: [Wallet]
  */
-router.post('/send', auth, validate.sendXLM, async (req, res) => {
+router.post('/send', auth, requireStepUp2FA, validate.sendXLM, async (req, res) => {
   const { destination, memo } = req.body;
   const amount = parseFloat(req.body.amount);
 

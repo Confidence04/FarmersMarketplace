@@ -7,7 +7,6 @@ import { CompareProvider } from './context/CompareContext';
 import { NetworkProvider } from './context/NetworkContext';
 import { LoadingProvider, LoadingContext } from './context/LoadingContext';
 import { ThemeProvider } from './context/ThemeContext';
-import { setLoadingCallback, setLogoutCallback } from './api/client';
 import { toast } from './utils/toast';
 import { setLoadingCallback, setLogoutCallback, setEmailNotVerifiedCallback } from './api/client';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -17,6 +16,14 @@ import EmailVerificationBanner from './components/EmailVerificationBanner';
 import LoadingSpinner from './components/LoadingSpinner';
 import PageLoader from './components/PageLoader';
 import UpdatePrompt from './components/UpdatePrompt';
+import OfflineBanner from './components/OfflineBanner';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from './lib/queryClient';
+import { startOutboxSync } from './utils/draftOutbox';
+
+const ReactQueryDevtools = import.meta.env.DEV
+  ? lazy(() => import('@tanstack/react-query-devtools').then(m => ({ default: m.ReactQueryDevtools })))
+  : () => null;
 import { initSentry } from './utils/sentry';
 import { getLocaleDirection } from './i18n';
 import { showToast } from './utils/toast';
@@ -38,6 +45,8 @@ const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AddressBook = lazy(() => import('./pages/AddressBook'));
 const Settings = lazy(() => import('./pages/Settings'));
 const AccountRecovery = lazy(() => import('./pages/Settings').then(m => ({ default: m.AccountRecovery })));
+const Messages = lazy(() => import('./pages/Messages'));
+const Notifications = lazy(() => import('./pages/Notifications'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 function PrivateRoute({ children, role }) {
@@ -132,6 +141,7 @@ function AppContent() {
       <Navbar />
       <LoadingSpinner />
       <UpdatePrompt />
+      <OfflineBanner />
       <main id="main-content" tabIndex={-1} style={{ paddingTop: 24, outline: 'none' }}>
         <Suspense fallback={<PageLoader />}>
           <Routes>
@@ -152,6 +162,8 @@ function AppContent() {
             <Route path="/farmer/:id" element={<FarmerProfile />} />
             <Route path="/addresses" element={<PrivateRoute role="buyer"><AddressBook /></PrivateRoute>} />
             <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
+            <Route path="/messages" element={<PrivateRoute><Messages /></PrivateRoute>} />
+            <Route path="/notifications" element={<PrivateRoute><Notifications /></PrivateRoute>} />
             <Route path="/recover" element={<AccountRecovery />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
@@ -164,10 +176,12 @@ function AppContent() {
 export default function App() {
   React.useEffect(() => {
     initSentry();
+    return startOutboxSync();
   }, []);
 
   return (
     <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
           <FavoritesProvider>
@@ -181,6 +195,8 @@ export default function App() {
           </FavoritesProvider>
         </AuthProvider>
       </ThemeProvider>
+      <Suspense fallback={null}><ReactQueryDevtools initialIsOpen={false} /></Suspense>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }

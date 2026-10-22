@@ -53,6 +53,102 @@ router.get('/farmer', async (req, res) => {
   });
 });
 
+// GET /api/analytics/farmer/range?from=YYYY-MM-DD&to=YYYY-MM-DD (FE-29)
+// KPIs plus daily revenue/orders/views series for the analytics tab.
+router.get('/farmer/range', async (req, res) => {
+  if (req.user.role !== 'farmer') return err(res, 403, 'Farmers only', 'forbidden');
+  const farmerId = req.user.id;
+  const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+  const today = new Date().toISOString().slice(0, 10);
+  const to = isoDate.test(req.query.to || '') ? req.query.to : today;
+  const defaultFrom = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  const from = isoDate.test(req.query.from || '') ? req.query.from : defaultFrom;
+  if (from > to) return err(res, 400, '`from` must be on or before `to`', 'validation_error');
+
+  const day = (col) => (db.isPostgres ? `TO_CHAR(${col}, 'YYYY-MM-DD')` : `date(${col})`);
+  const range = (col) => `${day(col)} >= $2 AND ${day(col)} <= $3`;
+  const params = [farmerId, from, to];
+
+  const { rows: totals } = await db.query(
+    `SELECT COUNT(*) as order_count,
+            COALESCE(SUM(o.total_price), 0) as revenue,
+            COALESCE(SUM(o.fiat_total), 0) as revenue_usd,
+            COUNT(DISTINCT o.buyer_id) as buyers
+     FROM orders o JOIN products p ON o.product_id = p.id
+     WHERE p.farmer_id = $1 AND o.status = 'paid' AND ${range('o.created_at')}`,
+    params
+  );
+
+  const { rows: repeat } = await db.query(
+    `SELECT COUNT(*) as repeat_buyers FROM (
+       SELECT o.buyer_id FROM orders o JOIN products p ON o.product_id = p.id
+       WHERE p.farmer_id = $1 AND o.status = 'paid' AND ${range('o.created_at')}
+       GROUP BY o.buyer_id HAVING COUNT(*) > 1
+     ) t`,
+    params
+  );
+
+  const { rows: daily } = await db.query(
+    `SELECT ${day('o.created_at')} as day,
+            COALESCE(SUM(o.total_price), 0) as revenue,
+            COUNT(*) as orders
+     FROM orders o JOIN products p ON o.product_id = p.id
+     WHERE p.farmer_id = $1 AND o.status = 'paid' AND ${range('o.created_at')}
+     GROUP BY day ORDER BY day ASC`,
+    params
+  );
+
+  const { rows: dailyViews } = await db.query(
+    `SELECT ${day('v.viewed_at')} as day, COUNT(*) as views
+     FROM product_views v JOIN products p ON v.product_id = p.id
+     WHERE p.farmer_id = $1 AND ${range('v.viewed_at')}
+     GROUP BY day ORDER BY day ASC`,
+    params
+  ).catch(() => ({ rows: [] }));
+
+  const { rows: topProducts } = await db.query(
+    `SELECT p.name, COALESCE(SUM(o.total_price), 0) as revenue, COUNT(*) as orders
+     FROM orders o JOIN products p ON o.product_id = p.id
+     WHERE p.farmer_id = $1 AND o.status = 'paid' AND ${range('o.created_at')}
+     GROUP BY p.id, p.name ORDER BY revenue DESC LIMIT 5`,
+    params
+  );
+
+  const t = totals[0] || {};
+  const orders = Number(t.order_count) || 0;
+  const revenue = Number(t.revenue) || 0;
+  const buyers = Number(t.buyers) || 0;
+  const views = dailyViews.reduce((sum, r) => sum + (Number(r.views) || 0), 0);
+
+  // Merge orders and views into one zero-filled daily series.
+  const byDay = new Map();
+  for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${to}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+    const key = d.toISOString().slice(0, 10);
+    byDay.set(key, { day: key, revenue: 0, orders: 0, views: 0 });
+  }
+  for (const r of daily) if (byDay.has(r.day)) Object.assign(byDay.get(r.day), { revenue: Number(r.revenue) || 0, orders: Number(r.orders) || 0 });
+  for (const r of dailyViews) if (byDay.has(r.day)) byDay.get(r.day).views = Number(r.views) || 0;
+
+  res.json({
+    success: true,
+    data: {
+      from,
+      to,
+      kpis: {
+        revenue,
+        revenue_usd: parseFloat(t.revenue_usd) || null,
+        orders,
+        average_order_value: orders ? revenue / orders : 0,
+        views,
+        conversion_rate: views ? orders / views : null,
+        repeat_buyer_rate: buyers ? (Number(repeat[0]?.repeat_buyers) || 0) / buyers : 0,
+      },
+      series: [...byDay.values()],
+      top_products: topProducts.map((p) => ({ ...p, revenue: Number(p.revenue) || 0, orders: Number(p.orders) || 0 })),
+    },
+  });
+});
+
 // GET /api/analytics/farmer/waitlist — waitlist analytics per product (farmer only)
 router.get('/farmer/waitlist', async (req, res) => {
   if (req.user.role !== 'farmer') return err(res, 403, 'Farmers only', 'forbidden');

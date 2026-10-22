@@ -22,8 +22,7 @@ async function getBudgetSummary(userId) {
   const { rows: userRows } = await db.query('SELECT monthly_budget FROM users WHERE id = $1', [
     userId,
   ]);
-  const limit_xlm =
-    userRows[0]?.monthly_budget != null ? Number(userRows[0].monthly_budget) : null;
+  const limit_xlm = userRows[0]?.monthly_budget != null ? Number(userRows[0].monthly_budget) : null;
 
   // Include both pending and paid to match the enforcement logic in orderBudgetGuard.
   const { rows: spendRows } = await db.query(
@@ -34,8 +33,7 @@ async function getBudgetSummary(userId) {
   );
 
   const spent_xlm = Number(spendRows[0]?.spent || 0);
-  const remaining_xlm =
-    limit_xlm == null ? null : Number((limit_xlm - spent_xlm).toFixed(7));
+  const remaining_xlm = limit_xlm == null ? null : Number((limit_xlm - spent_xlm).toFixed(7));
   const reset_at = getResetAt();
 
   return { limit_xlm, spent_xlm, remaining_xlm, reset_at };
@@ -67,7 +65,7 @@ router.get('/budget-status', auth, async (req, res) => {
 
 // PUT /api/wallet/budget — set, update, or remove monthly spending limit
 // { limit_xlm: N } to set/update; { limit_xlm: null } or { limit_xlm: 0 } to remove
-router.put('/budget', auth, async (req, res) => {
+router.put('/budget', auth, validate.walletBudgetPut, async (req, res) => {
   if (req.user.role !== 'buyer') return err(res, 403, 'Only buyers can set budgets', 'forbidden');
 
   const { limit_xlm } = req.body;

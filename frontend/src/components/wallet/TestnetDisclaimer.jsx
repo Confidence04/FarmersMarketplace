@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
+import { safeStorage } from '../../utils/safeStorage';
 
 const DISCLAIMER_KEY = 'testnet_disclaimer_dismissed';
 
 /** One-time modal reminding users that testnet XLM has no value. */
 export default function TestnetDisclaimer() {
-  const [visible, setVisible] = useState(() => localStorage.getItem(DISCLAIMER_KEY) !== 'true');
+  const [visible, setVisible] = useState(() => safeStorage.get(DISCLAIMER_KEY) !== 'true');
 
   function dismiss() {
-    localStorage.setItem(DISCLAIMER_KEY, 'true');
+    safeStorage.set(DISCLAIMER_KEY, 'true');
     setVisible(false);
   }
 

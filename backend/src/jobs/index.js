@@ -17,10 +17,13 @@
  */
 
 const cron = require('node-cron');
+const crypto = require('crypto');
 const logger = require('../logger');
 const config = require('../config');
+const cache = require('../cache');
 
 const MINUTE = 60 * 1000;
+const JOB_LOCK_TTL_MS = parseInt(process.env.JOB_LOCK_TTL_MS || String(10 * MINUTE), 10);
 
 /**
  * Registry. Each job has either `cron` (UTC cron expression) or `intervalMs`,
@@ -143,9 +146,22 @@ async function runExclusive(name, run) {
     return 'skipped';
   }
   running.add(name);
+  const lockKey = `jobs:lock:${name}`;
+  const lockOwner = crypto.randomUUID();
+  let distributedLock = null;
   const startedAt = Date.now();
-  logger.info('[jobs] Job started', { job: name, event: 'job_started' });
   try {
+    if (typeof cache.acquireLock === 'function') {
+      distributedLock = await cache.acquireLock(lockKey, lockOwner, JOB_LOCK_TTL_MS);
+      if (distributedLock === false) {
+        logger.info('[jobs] Skipping run: another instance holds the lock', { job: name, event: 'job_skipped_locked' });
+        return 'skipped';
+      }
+      if (distributedLock === null) {
+        logger.warn('[jobs] Distributed lock unavailable; using process-local guard', { job: name, event: 'job_lock_unavailable' });
+      }
+    }
+    logger.info('[jobs] Job started', { job: name, event: 'job_started' });
     await run();
     logger.info('[jobs] Job finished', { job: name, event: 'job_finished', durationMs: Date.now() - startedAt });
     return 'completed';
@@ -158,6 +174,9 @@ async function runExclusive(name, run) {
     });
     return 'failed';
   } finally {
+    if (distributedLock === true && typeof cache.releaseLock === 'function') {
+      await cache.releaseLock(lockKey, lockOwner);
+    }
     running.delete(name);
   }
 }

@@ -31,8 +31,6 @@ HISTORY="$REPO_ROOT/contracts/escrow/error-codes.txt"
 # so it runs without gawk).
 # ---------------------------------------------------------------------------
 enum_codes() {
-  sed -n '/^pub enum EscrowError/,/^}/p' "$LIB" \
-    | sed -nE 's/^[[:space:]]*([A-Za-z]+)[[:space:]]*=[[:space:]]*([0-9]+).*/\2 \1/p'
   # Portable (no gawk-only match(..., arr)): matches lines like  SomeName = 42,
   sed -n '/^pub enum EscrowError/,/^}/p' "$LIB" \
     | sed -nE 's/^[[:space:]]*([A-Za-z]+)[[:space:]]*=[[:space:]]*([0-9]+).*/\2 \1/p' \

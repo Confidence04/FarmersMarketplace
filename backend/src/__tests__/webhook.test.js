@@ -326,7 +326,10 @@ describe('webhookService', () => {
       updated_at: new Date().toISOString(),
     };
 
-    function makeDb({ webhookUrl = 'https://example.com/hook', webhookSecret = 'farmer-secret' } = {}) {
+    function makeDb({
+      webhookUrl = 'https://example.com/hook',
+      webhookSecret = 'farmer-secret',
+    } = {}) {
       const insertFn = jest.fn().mockResolvedValue([]);
       const whereFn = jest.fn().mockReturnThis();
       const firstFn = jest.fn().mockResolvedValue({
@@ -389,9 +392,7 @@ describe('webhookService', () => {
       expect(url).toBe('https://example.com/hook');
       expect(opts.method).toBe('POST');
       expect(opts.headers['X-Farmers-Signature']).toMatch(/^sha256=/);
-      expect(insertFn).toHaveBeenCalledWith(
-        expect.objectContaining({ success: true, attempt: 1 })
-      );
+      expect(insertFn).toHaveBeenCalledWith(expect.objectContaining({ success: true, attempt: 1 }));
     });
 
     it('retries on failure and records each attempt', async () => {
@@ -408,9 +409,9 @@ describe('webhookService', () => {
       await jest.runAllTimersAsync();
       await promise;
 
-      // 3 attempts (MAX_RETRIES = 3)
-      expect(global.fetch).toHaveBeenCalledTimes(3);
-      expect(insertFn).toHaveBeenCalledTimes(3);
+      // 6 total attempts: initial delivery plus five scheduled retries
+      expect(global.fetch).toHaveBeenCalledTimes(6);
+      expect(insertFn).toHaveBeenCalledTimes(6);
       jest.useRealTimers();
     });
 
@@ -456,7 +457,7 @@ describe('webhookService', () => {
       await jest.runAllTimersAsync();
       await expect(promise).resolves.toBeUndefined();
 
-      expect(insertFn).toHaveBeenCalledTimes(3);
+      expect(insertFn).toHaveBeenCalledTimes(6);
       jest.useRealTimers();
     });
   });

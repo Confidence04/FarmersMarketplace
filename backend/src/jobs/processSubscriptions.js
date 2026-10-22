@@ -4,7 +4,7 @@ const cron = require('node-cron');
 const logger = require('../logger');
 const { transition } = require('../models/orderStatus');
 const db = require('../db/schema');
-const { sendPayment } = require('../utils/stellar');
+const { sendPayment, getSpendableBalance } = require('../utils/stellar');
 const { decryptUserSecretKey } = require('../utils/crypto');
 const { nextOrderDate } = require('../routes/subscriptions');
 const mailer = require('../utils/mailer');
@@ -122,6 +122,22 @@ async function processSubscriptions() {
     }
 
     const totalPrice = sub.price * sub.quantity;
+
+    if (typeof getSpendableBalance === 'function') {
+      const spendable = await getSpendableBalance(sub.buyer_wallet);
+      if (spendable < totalPrice) {
+        const retryCount = (current.retry_count || 0) + 1;
+        await db.query('UPDATE subscriptions SET retry_count = $1, retry_after = $2 WHERE id = $3', [retryCount, retryAfterDate(), sub.id]);
+        try {
+          const { rows: buyerRows } = await db.query('SELECT email, name FROM users WHERE id = $1', [sub.buyer_id]);
+          if (buyerRows[0]) await mailer.sendSubscriptionPaymentFailedEmail({ buyer: buyerRows[0], subscription: sub, reason: 'insufficient_funds' });
+        } catch (mailErr) {
+          logger.warn('[subscriptions] Failed to notify insufficient funds', { subscriptionId: sub.id, error: mailErr.message });
+        }
+        logger.warn(`[subscriptions] Sub ${sub.id} deferred: spendable balance ${spendable} below ${totalPrice}`);
+        continue;
+      }
+    }
 
     // Atomic stock check + order creation
     let orderId;

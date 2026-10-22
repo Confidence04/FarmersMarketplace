@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../db/schema');
 const auth = require('../middleware/auth');
+const validate = require('../middleware/validate');
 const { err } = require('../middleware/error');
 const { sendPayment, getBalance } = require('../utils/stellar');
 const { decryptUserSecretKey } = require('../utils/crypto');
@@ -45,7 +46,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/bundles — farmer creates a bundle
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, validate.bundle, async (req, res) => {
   if (req.user.role !== 'farmer')
     return err(res, 403, 'Only farmers can create bundles', 'forbidden');
 
@@ -75,7 +76,12 @@ router.post('/', auth, async (req, res) => {
     }
   }
   if (invalidProductIds.length > 0) {
-    return err(res, 400, `Invalid product IDs: ${invalidProductIds.join(', ')}`, 'validation_error');
+    return err(
+      res,
+      400,
+      `Invalid product IDs: ${invalidProductIds.join(', ')}`,
+      'validation_error'
+    );
   }
 
   const id = await withTx(async (q) => {
@@ -109,7 +115,7 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // POST /api/orders/bundle — buyer purchases a bundle
-router.post('/purchase', auth, async (req, res) => {
+router.post('/purchase', auth, validate.bundlePurchase, async (req, res) => {
   if (req.user.role !== 'buyer')
     return err(res, 403, 'Only buyers can purchase bundles', 'forbidden');
 
@@ -191,14 +197,12 @@ router.post('/purchase', auth, async (req, res) => {
           item.product_id,
         ]);
     });
-    res
-      .status(402)
-      .json({
-        success: false,
-        message: 'Payment failed: ' + e.message,
-        code: 'payment_failed',
-        orderId,
-      });
+    res.status(402).json({
+      success: false,
+      message: 'Payment failed: ' + e.message,
+      code: 'payment_failed',
+      orderId,
+    });
   }
 });
 

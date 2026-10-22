@@ -11,9 +11,9 @@ if (typeof document !== 'undefined' && !document.getElementById('wallet-toast-st
 /** Incoming payment notifications, stacked bottom-right. */
 export default function WalletToast({ toasts, usd }) {
   return (
-    <div style={s.toastContainer} aria-live="polite">
+    <div className="wallet-toast-container" style={s.toastContainer} aria-live="polite">
       {toasts.map(t => (
-        <div key={t.id} style={s.toast} role="status">
+        <div key={t.id} className="wallet-toast" style={s.toast} role="status">
           <div style={s.toastTitle}>Payment received</div>
           <div style={s.toastSub}>
             +{parseFloat(t.amount).toFixed(2)} XLM {usd(parseFloat(t.amount)) && <span style={{ fontSize: 11, color: 'var(--color-text-subtle)' }}>({usd(parseFloat(t.amount))})</span>} from {t.from.slice(0, 8)}...{t.from.slice(-4)}

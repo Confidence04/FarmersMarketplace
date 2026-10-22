@@ -24,12 +24,13 @@ export default function AdminDisputesPanel({ disputes = [], onResolve }) {
   };
 
   return (
-    <div style={s.card}>
+    <div className="admin-panel" style={s.card}>
       <h3 style={{ marginBottom: 16, color: '#333' }}>⚖️ Disputes ({disputes.length})</h3>
       {disputes.length === 0 ? (
         <div style={{ color: '#888', fontSize: 14 }}>No disputes filed.</div>
       ) : (
-        <table style={s.table}>
+        <div className="admin-table-scroll">
+          <table style={s.table}>
           <thead>
             <tr>
               <th style={s.th}>ID</th>
@@ -73,7 +74,8 @@ export default function AdminDisputesPanel({ disputes = [], onResolve }) {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       )}
     </div>
   );

@@ -6,6 +6,7 @@ import AdminAnalyticsSummary from '../components/admin/AdminAnalyticsSummary';
 import AdminUsersPanel from '../components/admin/AdminUsersPanel';
 import AdminOrdersPanel from '../components/admin/AdminOrdersPanel';
 import AdminDisputesPanel from '../components/admin/AdminDisputesPanel';
+import ResolveDisputeModal from '../components/admin/ResolveDisputeModal';
 import AdminAnnouncementsPanel from '../components/admin/AdminAnnouncementsPanel';
 
 import { getErrorMessage } from '../utils/errorMessages';
@@ -80,72 +81,6 @@ function BanModal({ user, onConfirm, onCancel, loading }) {
             {loading ? 'Banning…' : 'Ban User'}
           </button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function ResolveDisputeModal({ dispute, onConfirm, onCancel }) {
-  const confirmRef = useRef(null);
-  const [resolution, setResolution] = useState('farmer');
-  const [splitPercentBuyer, setSplitPercentBuyer] = useState('50');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
-  useEffect(() => { confirmRef.current?.focus(); }, []);
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setBusy(true);
-    setErr('');
-    const body = resolution === 'split'
-      ? { resolution, split_percent_buyer: Number(splitPercentBuyer) }
-      : { resolution };
-    try { await onConfirm(dispute.id, body); }
-    catch (e) { setErr(getErrorMessage(e)); setBusy(false); }
-  }
-  return (
-    <div role="dialog" aria-modal="true" aria-labelledby="resolve-modal-title"
-      onKeyDown={e => e.key === 'Escape' && onCancel()}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-      <div style={{ background: '#fff', borderRadius: 12, padding: 28, maxWidth: 460, width: '90%', boxShadow: '0 4px 24px #0003' }}>
-        <div id="resolve-modal-title" style={{ fontWeight: 700, fontSize: 17, marginBottom: 6, color: '#333' }}>
-          Resolve Dispute #{dispute.id}
-        </div>
-        <div style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>
-          <strong>{dispute.product_name}</strong> · {dispute.buyer_name} · {Number(dispute.total_price).toFixed(2)} XLM
-        </div>
-        <div style={{ fontSize: 13, color: '#555', marginBottom: 16, background: '#f8f8f8', borderRadius: 8, padding: '10px 12px' }}>
-          <strong>Reason:</strong> {dispute.reason}
-        </div>
-        <form onSubmit={handleSubmit}>
-          <label style={{ display: 'block', fontSize: 13, color: '#555', marginBottom: 4 }}>Resolve in favor of</label>
-          <select ref={confirmRef} value={resolution} onChange={e => setResolution(e.target.value)}
-            style={{ width: '100%', padding: '8px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14, marginBottom: 14 }}>
-            <option value="farmer">Farmer (release funds)</option>
-            <option value="buyer">Buyer (refund)</option>
-            <option value="split">Split</option>
-          </select>
-          {resolution === 'split' && (
-            <>
-              <label style={{ display: 'block', fontSize: 13, color: '#555', marginBottom: 4 }}>Buyer share (%)</label>
-              <input type="number" min="0" max="100" step="0.01" required value={splitPercentBuyer}
-                aria-describedby="split-hint"
-                onChange={e => setSplitPercentBuyer(e.target.value)}
-                style={{ width: '100%', padding: '8px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14, marginBottom: 6, boxSizing: 'border-box' }} />
-              <div id="split-hint" style={{ fontSize: 12, color: '#666', marginBottom: 14 }}>
-                The buyer is refunded this share in full. The farmer receives the remainder
-                after the platform fee and any cooperative royalty.
-              </div>
-            </>
-          )}
-          {err && <div style={{ color: '#c0392b', fontSize: 13, marginBottom: 10 }}>{err}</div>}
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-            <button type="button" onClick={onCancel} style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid #ddd', background: '#fff', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
-            <button type="submit" disabled={busy}
-              style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: busy ? '#ccc' : '#2d6a4f', color: '#fff', cursor: busy ? 'not-allowed' : 'pointer', fontWeight: 600 }}>
-              {busy ? 'Saving…' : 'Confirm'}
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   );
@@ -554,7 +489,7 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div style={s.page}>
+    <div className="admin-dashboard" style={s.page}>
       {deactivateTarget && (
         <DeactivateModal
           user={deactivateTarget}
@@ -1229,7 +1164,7 @@ export default function AdminDashboard() {
           Compare function signatures between two WASM versions of a registered contract.
           Results are cached for 10 minutes.
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'end', marginBottom: 12 }}>
+        <div className="admin-comparison-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'end', marginBottom: 12 }}>
           <div>
             <label style={{ display: 'block', fontSize: 13, marginBottom: 4, color: '#555' }}>Registry ID</label>
             <input style={inputStyle} type="number" placeholder="Contract registry ID" value={cmpRegistryId} onChange={(e) => setCmpRegistryId(e.target.value)} />

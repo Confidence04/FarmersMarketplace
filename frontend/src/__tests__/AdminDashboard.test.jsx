@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { vi, test, expect } from 'vitest';
 import { axe } from 'jest-axe';
-import AdminDashboard from '../AdminDashboard';
+import AdminDashboard from '../pages/AdminDashboard';
 
 test('ban requires confirmation through the accessible dialog', async () => {
   const onBan = vi.fn();

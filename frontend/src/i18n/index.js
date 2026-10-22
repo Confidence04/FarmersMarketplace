@@ -1,8 +1,6 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import en from './en.json';
-import sw from './sw.json';
-import ar from './ar.json';
 
 /**
  * Per-locale text-direction configuration.
@@ -20,13 +18,18 @@ export function getLocaleDirection(lng) {
   return LOCALE_DIRECTIONS[lng] ?? 'ltr';
 }
 
+const localeLoaders = {
+  sw: () => import('./sw.json'),
+  ar: () => import('./ar.json'),
+};
+
+const initialLng = localStorage.getItem('lang') || 'en';
+
 i18n.use(initReactI18next).init({
-  resources: { en: { translation: en }, sw: { translation: sw }, ar: { translation: ar } },
-  lng: localStorage.getItem('lang') || 'en',
+  resources: { en: { translation: en } },
+  lng: 'en',
   fallbackLng: 'en',
-  // Resources are statically bundled — no network fetch occurs.
-  // initImmediate:false makes init synchronous so the bundled fallback
-  // is always available before the first render, preventing raw key display.
+  // Keep the English fallback synchronous so the first render never shows keys.
   initImmediate: false,
   interpolation: { escapeValue: false },
   saveMissing: import.meta.env.DEV,
@@ -37,6 +40,15 @@ i18n.use(initReactI18next).init({
   },
 });
 
+export async function changeAppLanguage(lng) {
+  const loadLocale = localeLoaders[lng];
+  if (loadLocale && !i18n.hasResourceBundle(lng, 'translation')) {
+    const { default: translation } = await loadLocale();
+    i18n.addResourceBundle(lng, 'translation', translation, true, true);
+  }
+  return i18n.changeLanguage(lng);
+}
+
 i18n.on('languageChanged', (lng) => {
   localStorage.setItem('lang', lng);
   // Apply dir attribute to document root whenever the language changes
@@ -46,8 +58,8 @@ i18n.on('languageChanged', (lng) => {
 });
 
 // Apply direction on initial load
-const initialLng = localStorage.getItem('lang') || 'en';
 document.documentElement.setAttribute('dir', getLocaleDirection(initialLng));
 document.documentElement.setAttribute('lang', initialLng);
+if (initialLng !== 'en') void changeAppLanguage(initialLng);
 
 export default i18n;

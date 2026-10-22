@@ -12,7 +12,7 @@
   --color-success: #40c074;
   --color-danger: #c0392b;
   --color-danger-soft: #fee;
-  --color-warning: #e65100;
+  --color-warning: #b84000;
   --color-warning-text: #856404;
   --color-warning-soft: #fff8e1;
   --color-warning-bg: #fff3cd;
@@ -23,9 +23,9 @@
   --color-dialog-overlay: rgba(0, 0, 0, 0.5);
   --color-text: #333;
   --color-text-secondary: #555;
-  --color-text-muted: #888;
-  --color-text-faint: #aaa;
-  --color-text-subtle: #bbb;
+  --color-text-muted: #6b6b6b; /* 5.3:1 on surface (#1502) */
+  --color-text-faint: #707070; /* ≥4.5:1 on surface + surface-muted */
+  --color-text-subtle: #707070;
   --color-border: #eee;
   --color-border-input: #ddd;
   --color-track: #edf2f7;
@@ -54,8 +54,8 @@
   --color-text: #e6e6e6;
   --color-text-secondary: #bdbdbd;
   --color-text-muted: #9e9e9e;
-  --color-text-faint: #777;
-  --color-text-subtle: #666;
+  --color-text-faint: #9a9a9a; /* ≥4.5:1 on dark surfaces (#1502) */
+  --color-text-subtle: #949494;
   --color-border: #333;
   --color-border-input: #444;
   --color-track: #333;

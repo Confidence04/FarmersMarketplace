@@ -71,6 +71,17 @@ async function closeExpiredAuctions() {
     }
 
     try {
+      // Claim the auction before touching Stellar. FOR UPDATE in the bid path
+      // prevents bid races; this conditional claim prevents settlement races
+      // between concurrent cron workers.
+      if (db.isPostgres) {
+        const claim = await db.query(
+          `UPDATE auctions SET winner_notified = 2
+           WHERE id = $1 AND status = 'active' AND COALESCE(winner_notified, 0) = 0
+           RETURNING id`, [auction.id]
+        );
+        if (!claim.rows.length) continue;
+      }
       const txHash = await sendPayment({
         senderSecret: await decryptUserSecretKey(winner.buyer_secret),
         receiverPublicKey: auction.farmer_wallet,
@@ -78,6 +89,44 @@ async function closeExpiredAuctions() {
         memo: `Auction#${auction.id}`,
       });
 
+      if (db.isPostgres) {
+        await db.query(
+          `UPDATE auctions
+           SET status = 'ended',
+               winner_id = $1,
+               winner_notified = 1,
+               closed_at = NOW()
+           WHERE id = $2 AND (winner_notified = 2 OR winner_notified = 0)`,
+          [winner.buyer_id, auction.id]
+        );
+
+        await db.query(
+          `INSERT INTO orders
+           (buyer_id, product_id, quantity, total_price, status, stellar_tx_hash)
+           VALUES ($1, $2, 1, $3, 'paid', $4)`,
+          [winner.buyer_id, auction.product_id, winner.amount, txHash]
+        );
+      } else {
+        db.prepare(
+          `UPDATE auctions
+           SET status = 'ended',
+               winner_id = ?,
+               winner_notified = 1,
+               closed_at = datetime('now')
+           WHERE id = ?`
+        ).run(winner.buyer_id, auction.id);
+
+        db.prepare(
+          `INSERT INTO orders
+           (buyer_id, product_id, quantity, total_price, status, stellar_tx_hash)
+           VALUES (?, ?, 1, ?, 'paid', ?)`
+        ).run(
+          winner.buyer_id,
+          auction.product_id,
+          winner.amount,
+          txHash
+        );
+      }
       await db.query(
         `UPDATE auctions
          SET status = 'ended',

@@ -2,9 +2,10 @@
   "extends": [
     "eslint:recommended",
     "plugin:react/recommended",
-    "plugin:react-hooks/recommended"
+    "plugin:react-hooks/recommended",
+    "plugin:import/recommended"
   ],
-  "plugins": ["react", "react-hooks", "react-refresh", "i18next"],
+  "plugins": ["react", "react-hooks", "react-refresh", "i18next", "import"],
   "settings": {
     "react": {
       "version": "detect"
@@ -12,6 +13,7 @@
   },
   "rules": {
     "react-refresh/only-export-components": ["warn", { "allowConstantExport": true }],
+    "import/no-unused-modules": ["error", { "unusedExports": true }],
     "i18next/no-literal-string": [
       "warn",
       {

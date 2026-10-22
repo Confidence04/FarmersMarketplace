@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { visualizer } from 'rollup-plugin-visualizer';
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
 // Bundle size budgets (kB, uncompressed).
@@ -43,24 +44,48 @@ const BACKEND_PATHS = [
   '/api',
   '/uploads',
   '/federation',
+  '/seo',
   '/.well-known',
   '/sitemap.xml',
   '/robots.txt',
 ];
 
 export default defineConfig({
-  plugins: [react(), serviceWorkerVersion()],
+  plugins: [
+    react(),
+    serviceWorkerVersion(),
+    visualizer({
+      filename: 'dist/bundle-report.html',
+      template: 'treemap',
+      gzipSize: true,
+      brotliSize: true,
+      open: false,
+    }),
+  ],
   define: {
     'self.__APP_VERSION__': JSON.stringify(pkg.version),
   },
   build: {
+    manifest: true,
     // Warn (and fail in CI via the check-bundle-size script) when any single
     // chunk exceeds this limit.
     chunkSizeWarningLimit: INITIAL_CHUNK_BUDGET_KB,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
+        manualChunks(id) {
+          const normalizedId = id.replaceAll('\\', '/');
+          if (/\/node_modules\/(react|react-dom|react-router-dom)\//.test(normalizedId)) {
+            return 'vendor';
+          }
+          if (/\/node_modules\/(i18next|react-i18next)\//.test(normalizedId)) {
+            return 'i18n-vendor';
+          }
+          if (/\/node_modules\/(recharts|d3-[^/]+|internmap|victory-vendor)\//.test(normalizedId)) {
+            return 'charts';
+          }
+          if (/\/node_modules\/(leaflet|react-leaflet|@react-leaflet\/core)\//.test(normalizedId)) {
+            return 'maps';
+          }
         },
       },
       // Treat the optional Sentry SDK as external — it is loaded dynamically

@@ -49,8 +49,10 @@ router.get('/search', async (req, res) => {
 router.post('/upload-image', auth, (req, res) => {
   upload.single('image')(req, res, async (uploadErr) => {
     if (uploadErr) {
-      if (uploadErr.code === 'LIMIT_FILE_SIZE') return err(res, 400, 'Image must be 5 MB or smaller', 'file_too_large');
-      if (uploadErr.code === 'INVALID_TYPE') return err(res, 400, uploadErr.message, 'invalid_file_type');
+      if (uploadErr.code === 'LIMIT_FILE_SIZE')
+        return err(res, 400, 'Image must be 5 MB or smaller', 'file_too_large');
+      if (uploadErr.code === 'INVALID_TYPE')
+        return err(res, 400, uploadErr.message, 'invalid_file_type');
       return err(res, 400, 'Upload failed', 'upload_error');
     }
     if (!req.file) return err(res, 400, 'No image file provided', 'no_file');
@@ -72,7 +74,8 @@ router.post('/upload-image', auth, (req, res) => {
 // Body: { updates?: [{ product_id, price }], adjustment_percent?: number }
 // Explicit updates win; adjustment_percent applies to the farmer's other products.
 router.patch('/bulk-price', auth, async (req, res) => {
-  if (req.user.role !== 'farmer') return err(res, 403, 'Only farmers can update prices', 'forbidden');
+  if (req.user.role !== 'farmer')
+    return err(res, 403, 'Only farmers can update prices', 'forbidden');
 
   const updates = Array.isArray(req.body?.updates) ? req.body.updates : [];
   const pct = req.body?.adjustment_percent;
@@ -83,20 +86,33 @@ router.patch('/bulk-price', auth, async (req, res) => {
   }
   for (const u of updates) {
     if (!Number.isInteger(Number(u?.product_id)) || !(Number(u?.price) > 0)) {
-      return err(res, 400, 'Each update needs a product_id and a positive price', 'validation_error');
+      return err(
+        res,
+        400,
+        'Each update needs a product_id and a positive price',
+        'validation_error'
+      );
     }
   }
   if (hasPct && (!Number.isFinite(Number(pct)) || Number(pct) <= -100)) {
-    return err(res, 400, 'adjustment_percent must be a number greater than -100', 'validation_error');
+    return err(
+      res,
+      400,
+      'adjustment_percent must be a number greater than -100',
+      'validation_error'
+    );
   }
 
-  const { rows: owned } = await db.query('SELECT id, price FROM products WHERE farmer_id = $1', [req.user.id]);
+  const { rows: owned } = await db.query('SELECT id, price FROM products WHERE farmer_id = $1', [
+    req.user.id,
+  ]);
   const ownedById = new Map(owned.map((p) => [Number(p.id), p]));
 
   const newPrices = new Map();
   for (const u of updates) {
     const id = Number(u.product_id);
-    if (!ownedById.has(id)) return err(res, 404, `Product ${id} not found or not yours`, 'not_found');
+    if (!ownedById.has(id))
+      return err(res, 404, `Product ${id} not found or not yours`, 'not_found');
     newPrices.set(id, Number(u.price));
   }
   if (hasPct) {
@@ -110,7 +126,11 @@ router.patch('/bulk-price', auth, async (req, res) => {
   let updated = 0;
   for (const [id, price] of newPrices) {
     if (!(price > 0) || price === Number(ownedById.get(id).price)) continue;
-    await db.query('UPDATE products SET price = $1 WHERE id = $2 AND farmer_id = $3', [price, id, req.user.id]);
+    await db.query('UPDATE products SET price = $1 WHERE id = $2 AND farmer_id = $3', [
+      price,
+      id,
+      req.user.id,
+    ]);
     await db.query('INSERT INTO price_history (product_id, price) VALUES ($1, $2)', [id, price]);
     updated++;
   }

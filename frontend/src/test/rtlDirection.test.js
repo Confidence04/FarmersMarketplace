@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getLocaleDirection, LOCALE_DIRECTIONS } from '../i18n/index.js';
+import i18n, { changeAppLanguage, getLocaleDirection, LOCALE_DIRECTIONS } from '../i18n/index.js';
 
 describe('RTL layout support (#1061)', () => {
   it('returns ltr for English', () => {
@@ -26,5 +26,15 @@ describe('RTL layout support (#1061)', () => {
     LOCALE_DIRECTIONS['ar'] = 'rtl';
     expect(getLocaleDirection('ar')).toBe('rtl');
     delete LOCALE_DIRECTIONS['ar'];
+  });
+
+  it('loads a non-English locale only when selected', async () => {
+    expect(i18n.hasResourceBundle('sw', 'translation')).toBe(false);
+
+    await changeAppLanguage('sw');
+
+    expect(i18n.hasResourceBundle('sw', 'translation')).toBe(true);
+    expect(i18n.language).toBe('sw');
+    await changeAppLanguage('en');
   });
 });

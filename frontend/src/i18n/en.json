@@ -1,4 +1,35 @@
 {
+  "inbox": {
+    "title": "Messages",
+    "conversations": "Conversations",
+    "thread": "Message thread",
+    "loading": "Loading…",
+    "empty": "No conversations yet.",
+    "unread": "unread",
+    "selectConversation": "Select a conversation to start reading.",
+    "back": "Back",
+    "newConversation": "New conversation",
+    "sending": "Sending…",
+    "failed": "Failed to send.",
+    "retry": "Retry",
+    "inputLabel": "Type a message",
+    "placeholder": "Write a message…",
+    "send": "Send",
+    "loadError": "Could not load conversations.",
+    "messageFarmer": "Message farmer"
+  },
+  "notificationCenter": {
+    "title": "Notifications",
+    "markAllRead": "Mark all read",
+    "markRead": "Mark read",
+    "viewAll": "View all",
+    "loading": "Loading…",
+    "empty": "You have no notifications.",
+    "loadMore": "Load more",
+    "loadError": "Could not load notifications.",
+    "unreadCount_one": "{{count}} unread notification",
+    "unreadCount_other": "{{count}} unread notifications"
+  },
   "nav": {
     "brand": "🌿 FarmersMarket",
     "browse": "Browse",
@@ -66,6 +97,7 @@
       "resend": "Resend verification email",
       "resent": "If your account needs verification, a new email has been sent.",
       "dismiss": "Dismiss"
+    },
     "mfa": {
       "prompt": "Enter the 6-digit code from your authenticator app.",
       "backupPrompt": "Enter one of your backup codes.",
@@ -307,6 +339,7 @@
     "invalid_code": "That verification code is incorrect.",
     "totp_required": "Enter your two-factor authentication code to continue.",
     "not_found": "We couldn't find what you were looking for."
+  },
   "notFound": {
     "title": "404 - Page Not Found",
     "body": "The page you're looking for doesn't exist. It may have been moved or deleted.",
@@ -352,5 +385,27 @@
     "orderUpdates": "Order Updates",
     "promotions": "Promotions & Offers",
     "newsletter": "Newsletter"
+  },
+  "offline": {
+    "banner": "You are offline. Browsing cached products only — payments, wallet sends and orders are disabled.",
+    "willPublish": "Will publish when back online",
+    "publishedQueued": "Your listing \"{{name}}\" was published.",
+    "publishFailed": "Could not publish \"{{name}}\": {{error}}"
+  },
+  "upload": {
+    "progress": "Upload progress",
+    "cancel": "Cancel",
+    "retry": "Retry upload",
+    "done": "Upload complete",
+    "notImage": "Please choose an image file (JPEG, PNG or WebP).",
+    "generateFailed": "Failed to generate image.",
+    "tooLarge": "Image exceeds the 5 MB limit.",
+    "unsupported": "Unsupported format. Use JPEG, PNG, or WebP."
+  },
+  "feedPagination": {
+    "loadMore": "Load more",
+    "retry": "Retry",
+    "loadError": "Could not load more items.",
+    "empty": "Nothing here yet."
   }
 }

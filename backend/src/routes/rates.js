@@ -11,7 +11,7 @@ router.get('/xlm-usd', async (req, res) => {
   const now = Date.now();
 
   if (cache.rate && now - cache.fetchedAt < CACHE_TTL) {
-    return res.json({ success: true, rate: cache.rate, cached: true });
+    return res.json({ success: true, rate: cache.rate, fetchedAt: new Date(cache.fetchedAt).toISOString(), cached: true });
   }
 
   try {
@@ -36,10 +36,10 @@ router.get('/xlm-usd', async (req, res) => {
       logger.warn('[rates] Failed to persist rate to database', { error: dbErr.message });
     }
 
-    res.json({ success: true, rate, cached: false });
+    res.json({ success: true, rate, fetchedAt: new Date(now).toISOString(), cached: false });
   } catch (e) {
     // Return stale cache if available rather than failing
-    if (cache.rate) return res.json({ success: true, rate: cache.rate, cached: true, stale: true });
+    if (cache.rate) return res.json({ success: true, rate: cache.rate, fetchedAt: new Date(cache.fetchedAt).toISOString(), cached: true, stale: true });
     err(res, 502, 'Unable to fetch exchange rate', 'rate_fetch_error');
   }
 });

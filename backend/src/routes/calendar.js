@@ -7,6 +7,7 @@
 const router = require('express').Router();
 const db = require('../db/schema');
 const auth = require('../middleware/auth');
+const validate = require('../middleware/validate');
 const { err } = require('../middleware/error');
 
 // Expand a single calendar entry into date ranges within a given month
@@ -23,12 +24,14 @@ function expandEntry(entry, year, month) {
     // Simple fixed range — clip to month
     const s = from > monthStart ? from : monthStart;
     const e = until ? (until < monthEnd ? until : monthEnd) : monthEnd;
-    if (s <= e) ranges.push({ from: s.toISOString().slice(0, 10), until: e.toISOString().slice(0, 10) });
+    if (s <= e)
+      ranges.push({ from: s.toISOString().slice(0, 10), until: e.toISOString().slice(0, 10) });
     return ranges;
   }
 
   // Recurring: iterate occurrence start dates
-  const intervalDays = entry.recurrence === 'weekly' ? 7 : entry.recurrence === 'biweekly' ? 14 : null;
+  const intervalDays =
+    entry.recurrence === 'weekly' ? 7 : entry.recurrence === 'biweekly' ? 14 : null;
   let cur = new Date(from);
 
   for (let i = 0; i < 500; i++) {
@@ -99,21 +102,37 @@ function mergeRanges(ranges) {
 }
 
 // POST /api/calendar
-router.post('/', auth, async (req, res) => {
-  const { product_id, available_from, available_until, recurrence = 'none', recurrence_end } = req.body;
+router.post('/', auth, validate.calendar, async (req, res) => {
+  const {
+    product_id,
+    available_from,
+    available_until,
+    recurrence = 'none',
+    recurrence_end,
+  } = req.body;
 
   if (!product_id || !available_from)
     return err(res, 400, 'product_id and available_from are required', 'validation_error');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(available_from))
     return err(res, 400, 'available_from must be YYYY-MM-DD', 'validation_error');
-  for (const [name, value] of [['available_until', available_until], ['recurrence_end', recurrence_end]]) {
+  for (const [name, value] of [
+    ['available_until', available_until],
+    ['recurrence_end', recurrence_end],
+  ]) {
     if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value))
       return err(res, 400, `${name} must be YYYY-MM-DD`, 'validation_error');
   }
   if (!['none', 'weekly', 'biweekly', 'monthly'].includes(recurrence))
-    return err(res, 400, "recurrence must be 'none','weekly','biweekly','monthly'", 'validation_error');
+    return err(
+      res,
+      400,
+      "recurrence must be 'none','weekly','biweekly','monthly'",
+      'validation_error'
+    );
 
-  const { rows: pRows } = await db.query('SELECT farmer_id FROM products WHERE id = $1', [product_id]);
+  const { rows: pRows } = await db.query('SELECT farmer_id FROM products WHERE id = $1', [
+    product_id,
+  ]);
   if (!pRows.length) return err(res, 404, 'Product not found', 'not_found');
   if (pRows[0].farmer_id !== req.user.id) return err(res, 403, 'Forbidden', 'forbidden');
 
@@ -143,9 +162,11 @@ router.get('/', async (req, res) => {
        AND (available_until IS NULL OR available_until >= $2)
        AND (recurrence_end IS NULL OR recurrence_end >= $2)
        AND available_from <= $3`,
-    [product_id,
-     new Date(Date.UTC(year, mon - 1, 1)).toISOString().slice(0, 10),
-     new Date(Date.UTC(year, mon, 0)).toISOString().slice(0, 10)]
+    [
+      product_id,
+      new Date(Date.UTC(year, mon - 1, 1)).toISOString().slice(0, 10),
+      new Date(Date.UTC(year, mon, 0)).toISOString().slice(0, 10),
+    ]
   );
 
   const allRanges = rows.flatMap((entry) => expandEntry(entry, year, mon));
@@ -170,8 +191,16 @@ router.delete('/:id', auth, async (req, res) => {
 
   if (delete_mode === 'instance') {
     if (!instance_date || !/^\d{4}-\d{2}-\d{2}$/.test(instance_date))
-      return err(res, 400, 'instance_date (YYYY-MM-DD) is required for instance delete', 'validation_error');
-    await db.query('UPDATE availability_calendar SET delete_instance_date = $1 WHERE id = $2', [instance_date, calId]);
+      return err(
+        res,
+        400,
+        'instance_date (YYYY-MM-DD) is required for instance delete',
+        'validation_error'
+      );
+    await db.query('UPDATE availability_calendar SET delete_instance_date = $1 WHERE id = $2', [
+      instance_date,
+      calId,
+    ]);
   } else {
     await db.query('DELETE FROM availability_calendar WHERE id = $1', [calId]);
   }

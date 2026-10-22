@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { safeSessionStorage } from '../utils/safeStorage';
 
 const COLORS = {
   info:    { bg: '#dbeafe', border: '#93c5fd', color: '#1e40af' },
@@ -10,16 +11,13 @@ const COLORS = {
 const STORAGE_KEY = 'dismissed_announcements';
 
 function getDismissed() {
-  try { return JSON.parse(sessionStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
+  const list = safeSessionStorage.getJSON(STORAGE_KEY, []);
+  return Array.isArray(list) ? list : [];
 }
 
 function dismiss(id) {
-  try {
-    const list = getDismissed();
-    if (!list.includes(id)) sessionStorage.setItem(STORAGE_KEY, JSON.stringify([...list, id]));
-  } catch {
-    // sessionStorage unavailable (e.g. private browsing restriction) — silently skip
-  }
+  const list = getDismissed();
+  if (!list.includes(id)) safeSessionStorage.setJSON(STORAGE_KEY, [...list, id]);
 }
 
 // Minimal markdown: bold (**text**), italic (*text*), links ([text](url))

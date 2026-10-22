@@ -20,6 +20,7 @@
 
 const router = require('express').Router();
 const auth = require('../middleware/auth');
+const validate = require('../middleware/validate');
 const db = require('../db/schema');
 const { err } = require('../middleware/error');
 const { invokeContract, simulateContract } = require('../utils/stellar');
@@ -43,9 +44,10 @@ function isPositiveNumber(n) {
 }
 
 async function getCallerStellarAddress(userId) {
-  const { rows } = await db.query('SELECT stellar_public_key, stellar_secret_key FROM users WHERE id = $1', [
-    userId,
-  ]);
+  const { rows } = await db.query(
+    'SELECT stellar_public_key, stellar_secret_key FROM users WHERE id = $1',
+    [userId]
+  );
   const caller = rows[0] || null;
   if (caller?.stellar_secret_key) {
     caller.stellar_secret_key = await decryptUserSecretKey(caller.stellar_secret_key);
@@ -63,7 +65,7 @@ async function getStreamRow(contractId, streamId) {
 
 // POST /api/paymentStreams — create a stream (caller is the sender)
 // Body: { contract_id, recipient, rate_per_second, deposit, end_time }
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, validate.paymentStream, async (req, res) => {
   const { contract_id, recipient, rate_per_second, deposit, end_time } = req.body || {};
 
   if (!validateContractId(contract_id)) {
@@ -143,7 +145,7 @@ router.get('/:contractId/:streamId/accrued', auth, async (req, res) => {
 
 // PATCH /api/paymentStreams/:contractId/:streamId/rate — decrease the streaming rate
 // Sender-only. Body: { new_rate }
-router.patch('/:contractId/:streamId/rate', auth, async (req, res) => {
+router.patch('/:contractId/:streamId/rate', auth, validate.paymentStreamRate, async (req, res) => {
   const { contractId } = req.params;
   const streamId = parseStreamId(req.params.streamId);
   if (!validateContractId(contractId)) {
@@ -258,6 +260,51 @@ router.post('/:contractId/:streamId/cancel', auth, async (req, res) => {
     res.json({ success: true, txHash: hash, result });
   } catch (e) {
     err(res, 502, `Failed to cancel stream: ${e.message}`, 'contract_error');
+  }
+});
+
+// POST /api/paymentStreams/:contractId/:streamId/top-up — add to the deposit
+// Sender-only. Body: { amount } in stroops. Mirrors stream.rs top_up().
+router.post('/:contractId/:streamId/top-up', auth, async (req, res) => {
+  const { contractId } = req.params;
+  const streamId = parseStreamId(req.params.streamId);
+  if (!validateContractId(contractId)) {
+    return err(res, 400, 'Invalid contractId format', 'invalid_contract_id');
+  }
+  if (streamId === null) return err(res, 400, 'Invalid streamId', 'validation_error');
+  const amount = Number(req.body?.amount);
+  if (!isPositiveNumber(amount)) return err(res, 400, 'amount must be a positive number', 'validation_error');
+
+  const tokenContractId = process.env.STREAM_TOKEN_CONTRACT_ID;
+  if (!tokenContractId) return err(res, 503, 'Stream token is not configured', 'not_configured');
+
+  const stream = await getStreamRow(contractId, streamId);
+  if (!stream) return err(res, 404, 'Stream not found', 'stream_not_found');
+  if (stream.cancelled) return err(res, 400, 'Stream is cancelled', 'invalid_state');
+
+  const caller = await getCallerStellarAddress(req.user.id);
+  if (caller?.stellar_public_key !== stream.sender) {
+    return err(res, 403, 'Only the stream sender can top up', 'forbidden');
+  }
+  if (!caller?.stellar_secret_key) {
+    return err(res, 400, 'No Stellar wallet on file for this account', 'no_wallet');
+  }
+
+  try {
+    const { hash, result } = await invokeContract({
+      contractId,
+      method: 'top_up',
+      signerSecret: caller.stellar_secret_key,
+      args: [
+        { type: 'u64', value: streamId },
+        { type: 'address', value: caller.stellar_public_key },
+        { type: 'address', value: tokenContractId },
+        { type: 'i128', value: BigInt(Math.round(amount)) },
+      ],
+    });
+    res.json({ success: true, txHash: hash, result });
+  } catch (e) {
+    err(res, 502, `Failed to top up stream: ${e.message}`, 'contract_error');
   }
 });
 
