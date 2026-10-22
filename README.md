@@ -601,6 +601,11 @@ For security vulnerabilities, follow the process in [SECURITY.md](./SECURITY.md)
 <!-- handsoff-issue-1382 -->
 - #1382: Align `api/client.js` with real backend routes: about a dozen methods call endpoints that don't exist
 
+<!-- handsoff-issue-1525 -->
+- #1525: CT-06: `creator-earnings::claim` lets the caller choose any token, but balances aren't tracked per token
+
+<!-- handsoff-issue-1528 -->
+- #1528: CT-09: Buyer/farmer escrow index stops growing at `MAX_INDEX_ENTRIES` (1,000) — define the behaviour
 <!-- handsoff-issue-1522 -->
 - #1522: CT-03: Truncated and duplicated function signatures: `resolve_dispute`, `set_coop`, `multisig_release`
 <!-- handsoff-issue-1538 -->
